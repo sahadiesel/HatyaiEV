@@ -1,0 +1,222 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// ตั้งค่าร้าน (สาขาเดียว — เก็บแถวเดียว id = 1)
+model CompanySettings {
+  id           Int    @id @default(1)
+  companyName  String @default("")
+  /// ที่อยู่บริษัท / ร้าน (แสดงบนเอกสาร)
+  address      String @default("")
+  /// เลขประจำตัวผู้เสียภาษี
+  taxId        String @default("")
+  phone        String @default("")
+  email        String @default("")
+  /// prefix หมายเลขเอกสาร เช่น INV-, RC-, PO-
+  docPrefixInvoice    String @default("INV")
+  docPrefixTaxInvoice String @default("TAX")
+  docPrefixReceipt    String @default("RC")
+  docPrefixPo         String @default("PO")
+  docPrefixWht        String @default("WHT")
+  updatedAt    DateTime @updatedAt
+}
+
+/// ผู้ว่าจ้าง (ลูกค้าที่จ้างเราซ่อม / ว่าจ้างงาน)
+model Client {
+  id        String   @id @default(cuid())
+  /// เลขที่อ้างอิงภายใน เช่น CL-2026-001
+  code      String?  @unique
+  name      String
+  taxId     String   @default("")
+  address   String   @default("")
+  phone     String   @default("")
+  email     String   @default("")
+  notes     String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hiringContracts  HiringContract[]
+  documents        Document[] @relation("ClientDocuments")
+}
+
+/// ผู้รับเหมา (เราจ้างต่อ)
+model Contractor {
+  id                 String   @id @default(cuid())
+  /// เลขที่อ้างอิงภายใน เช่น CR-2026-001
+  code               String?  @unique
+  name               String
+  taxId              String   @default("")
+  address            String   @default("")
+  phone              String   @default("")
+  email              String   @default("")
+  bankName           String   @default("")
+  bankAccount        String   @default("")
+  /// อัตราหัก ณ ที่จ่าย เริ่มต้น (%)
+  defaultWhtPercent  Decimal  @default(1)
+  notes              String   @default("")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  subcontractAgreements SubcontractAgreement[]
+  documents             Document[] @relation("ContractorDocuments")
+}
+
+/// สถานะสัญญารับจ้าง / สัญญาว่าจ้าง
+enum ContractDocStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+/// ชนิดเครื่องยนต์ (รายการรถในสัญญา)
+enum VehicleEngineType {
+  GASOLINE
+  DIESEL
+  ELECTRIC
+}
+
+/// สัญญารับจ้างจากผู้ว่าจ้าง — มีรายการรถและงวดเก็บเงิน (ใช้เป็นเงื่อนไขออกบิลรายคันได้ในอนาคต)
+model HiringContract {
+  id                   String             @id @default(cuid())
+  code                 String             @unique
+  title                String             @default("")
+  clientId             String
+  client               Client             @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  /// จำนวนรถในสัญญา (กำหนดจำนวนแถวรายการรถที่ต้องกรอก)
+  vehicleCount         Int                @default(0)
+  /// ราคาต่อคัน (ก่อน VAT)
+  pricePerVehicleExVat Decimal            @default(0)
+  vatRate              Decimal            @default(7)
+  status               ContractDocStatus  @default(DRAFT)
+  notes                String             @default("")
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  vehicles               HiringContractVehicle[]
+  installments           HiringContractInstallment[]
+  subcontractAgreements  SubcontractAgreement[]
+}
+
+model HiringContractVehicle {
+  id               String            @id @default(cuid())
+  hiringContractId String
+  hiringContract   HiringContract    @relation(fields: [hiringContractId], references: [id], onDelete: Cascade)
+  lineIndex        Int
+  brand            String            @default("")
+  model            String            @default("")
+  year             String            @default("")
+  color            String            @default("")
+  engineType       VehicleEngineType @default(GASOLINE)
+  engineSize       String            @default("")
+  extraNotes       String            @default("")
+
+  subcontractLinks SubcontractAgreementVehicle[]
+
+  @@unique([hiringContractId, lineIndex])
+  @@index([hiringContractId])
+}
+
+/// งวดเก็บเงินตามสัญญารับจ้าง (ใช้ซ้ำเป็นแนวทางออกบิลแต่ละครั้ง / แยกตามคันได้ในอนาคต)
+model HiringContractInstallment {
+  id               String         @id @default(cuid())
+  hiringContractId String
+  hiringContract   HiringContract @relation(fields: [hiringContractId], references: [id], onDelete: Cascade)
+  sequence         Int
+  label            String
+  /// จำนวนเงินงวดนี้ (บาท)
+  amount           Decimal        @default(0)
+  /// เปอร์เซ็นต์ของมูลค่าก่อน VAT รวม (ถ้ามี — ใช้คู่กับ amount)
+  percent          Decimal?
+
+  @@index([hiringContractId])
+}
+
+/// สัญญาว่าจ้าง (จ้างเหมาต่อ) — อ้างอิงสัญญารับจ้างและเลือกรายการรถจากฉบับนั้น
+model SubcontractAgreement {
+  id                   String             @id @default(cuid())
+  code                 String             @unique
+  title                String             @default("")
+  contractorId         String
+  contractor           Contractor         @relation(fields: [contractorId], references: [id], onDelete: Restrict)
+  hiringContractId     String
+  hiringContract       HiringContract     @relation(fields: [hiringContractId], references: [id], onDelete: Restrict)
+  /// จำนวนคันที่เลือกจากสัญญารับจ้าง (สะดวกแสดงผล)
+  vehicleCount         Int                @default(0)
+  pricePerVehicleExVat Decimal            @default(0)
+  vatRate              Decimal            @default(7)
+  status               ContractDocStatus  @default(DRAFT)
+  notes                String             @default("")
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  vehicles      SubcontractAgreementVehicle[]
+  installments  SubcontractAgreementInstallment[]
+}
+
+model SubcontractAgreementVehicle {
+  id                       String               @id @default(cuid())
+  subcontractAgreementId   String
+  subcontractAgreement     SubcontractAgreement @relation(fields: [subcontractAgreementId], references: [id], onDelete: Cascade)
+  hiringContractVehicleId  String
+  hiringContractVehicle    HiringContractVehicle @relation(fields: [hiringContractVehicleId], references: [id], onDelete: Cascade)
+
+  @@unique([subcontractAgreementId, hiringContractVehicleId])
+  @@index([subcontractAgreementId])
+}
+
+model SubcontractAgreementInstallment {
+  id                     String               @id @default(cuid())
+  subcontractAgreementId String
+  subcontractAgreement   SubcontractAgreement @relation(fields: [subcontractAgreementId], references: [id], onDelete: Cascade)
+  sequence               Int
+  label                  String
+  amount                 Decimal              @default(0)
+  percent                Decimal?
+
+  @@index([subcontractAgreementId])
+}
+
+/// เอกสารออกให้ผู้ว่าจ้าง / ผู้รับเหมา
+enum DocumentKind {
+  /// ใบแจ้งหนี้
+  INVOICE
+  /// ใบกำกับภาษี
+  TAX_INVOICE
+  /// ใบเสร็จรับเงิน
+  RECEIPT
+  /// ใบสั่งจ้าง (ผู้รับเหมา)
+  PURCHASE_ORDER
+  /// หลักฐานการหัก ณ ที่จ่าย
+  WITHHOLDING_TAX
+  /// ใบสำคัญจ่าย
+  PAYMENT_VOUCHER
+}
+
+model Document {
+  id              String         @id @default(cuid())
+  kind            DocumentKind
+  number          String         @default("")
+  issueDate       DateTime       @default(now())
+  /// ยอดรวมในเอกสาร (ตามประเภท)
+  subtotal        Decimal        @default(0)
+  vatAmount       Decimal        @default(0)
+  totalAmount     Decimal        @default(0)
+  withholdingAmount Decimal      @default(0)
+  notes           String         @default("")
+
+  clientId      String?
+  client        Client?      @relation("ClientDocuments", fields: [clientId], references: [id], onDelete: SetNull)
+  contractorId  String?
+  contractor    Contractor?  @relation("ContractorDocuments", fields: [contractorId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([kind])
+}

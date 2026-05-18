@@ -1,0 +1,37 @@
+{
+  "name": "hyev",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "prisma generate && next dev --turbopack -p 3002",
+    "dev:webpack": "prisma generate && next dev -p 3002",
+    "clean": "node -e \"try{require('fs').rmSync('.next',{recursive:true,force:true})}catch(e){}\"",
+    "build": "next build",
+    "start": "next start -p 3002",
+    "lint": "next lint",
+    "postinstall": "prisma generate",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.8.2",
+    "firebase": "^11.6.0",
+    "next": "^15.3.2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^9",
+    "eslint-config-next": "^15.3.2",
+    "postcss": "^8.5.3",
+    "prisma": "^6.8.2",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5"
+  }
+}

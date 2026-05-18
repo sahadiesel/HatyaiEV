@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // สำหรับพัฒนาเท่านั้น: แอปนี้ยังไม่ใช้ Firebase Auth จึงอนุญาตเขียนจาก Web SDK
+    // ก่อนขึ้น production ให้เปลี่ยนเป็นเงื่อนไข auth / บทบาทผู้ใช้
+    match /companySettings/{docId} {
+      allow read, write: if true;
+    }
+  }
+}
