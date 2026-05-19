@@ -7,6 +7,9 @@ export const metadata: Metadata = {
   description: "ระบบรับงานซ่อม ผู้ว่าจ้าง ผู้รับเหมา งวดเงิน และเอกสาร",
 };
 
+/** ทุกหน้าอ่านจาก Prisma — ไม่ prerender ตอน build (จำเป็นต่อ Firebase App Hosting) */
+export const dynamic = "force-dynamic";
+
 const nav = [
   { href: "/", label: "หน้าแรก" },
   { href: "/settings", label: "ตั้งค่าร้าน" },
