@@ -1,7 +1,62 @@
 # Firebase App Hosting — https://firebase.google.com/docs/app-hosting/configure
+# ค่า NEXT_PUBLIC_* ต้องมีทั้ง BUILD และ RUNTIME เพื่อให้ Next.js ฝัง config ตอน build
+
+runConfig:
+  minInstances: 0
+  maxInstances: 10
+  concurrency: 80
+
 env:
   - variable: DATABASE_URL
     value: file:./dev.db
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_FIREBASE_API_KEY
+    secret: hyevFirebaseApiKey
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+    value: auto-repair-management.firebaseapp.com
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    value: auto-repair-management
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+    value: auto-repair-management.firebasestorage.app
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+    value: "715388985698"
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_FIREBASE_APP_ID
+    value: 1:715388985698:web:7d1ccfe6610dd18e4e4c3b
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
+    value: G-KHQD1XJ2KC
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_COMPANY_LOGO_URL
+    value: https://firebasestorage.googleapis.com/v0/b/auto-repair-management.firebasestorage.app/o/Company%2FLogo_HYEV.png?alt=media&token=25341e05-002c-4e94-adb4-a6858377e417
     availability:
       - BUILD
       - RUNTIME

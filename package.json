@@ -18,7 +18,8 @@
     "deploy:indexes": "cross-env NODE_OPTIONS=--use-system-ca firebase deploy --only firestore:indexes --non-interactive",
     "deploy:firestore": "cross-env NODE_OPTIONS=--use-system-ca firebase deploy --only firestore --non-interactive",
     "deploy:storage": "cross-env NODE_OPTIONS=--use-system-ca firebase deploy --only storage --non-interactive",
-    "deploy:all": "cross-env NODE_OPTIONS=--use-system-ca firebase deploy --only firestore,storage --non-interactive"
+    "deploy:all": "cross-env NODE_OPTIONS=--use-system-ca firebase deploy --only firestore,storage --non-interactive",
+    "apphosting:sync-env": "powershell -ExecutionPolicy Bypass -File scripts/sync-apphosting-env.ps1"
   },
   "dependencies": {
     "@prisma/client": "^6.8.2",

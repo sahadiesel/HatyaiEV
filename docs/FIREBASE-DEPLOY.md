@@ -95,6 +95,26 @@ firebase login:ci
 3. เพิ่มสคริปต์ `deploy:functions` และ `deploy:backend` ใน `package.json`
 4. รัน `npm install` **บน Windows** ใน `functions/` — อย่า copy `node_modules` จาก WSL/Linux (จะขาด `firebase-functions.cmd`)
 
+## Firebase App Hosting (เว็บ production)
+
+Backend: **evbackend** — `https://evbackend--auto-repair-management.us-east4.hosted.app`
+
+ค่า env อยู่ใน `apphosting.yaml` (ยกเว้น API key ใช้ Secret Manager ชื่อ `hyevFirebaseApiKey`)
+
+หลังแก้ `.env.local` หรือเปลี่ยน API key:
+
+```powershell
+cd D:\HYEV
+npm run apphosting:sync-env
+git add apphosting.yaml
+git commit -m "Update App Hosting env"
+git push origin main
+```
+
+รอ rollout อัตโนมัติจาก GitHub (หรือ Roll out ใน Console → App Hosting → evbackend)
+
+**หมายเหตุ:** ข้อมูล Prisma/SQLite บน cloud (`file:./dev.db`) แยกจากเครื่อง dev — ตัวเลข 0 บน production จนกว่าจะกรอกข้อมูลใหม่หรือย้าย DB
+
 ## ความปลอดภัย
 
 - อย่า commit `.env.local`
