@@ -115,6 +115,7 @@ export function serializeContractPhotosForDb(photos: ContractPhoto[] | unknown):
 /** ตัดข้อมูลรถก่อนส่ง server action — ลดขนาด payload */
 export function stripVehiclesForSave<
   T extends {
+    id?: string;
     lineIndex: number;
     licensePlate?: string;
     brand?: string;
@@ -128,6 +129,7 @@ export function stripVehiclesForSave<
   },
 >(vehicles: T[]) {
   return vehicles.map((v) => ({
+    ...(v.id ? { id: v.id } : {}),
     lineIndex: v.lineIndex,
     licensePlate: v.licensePlate ?? "",
     brand: v.brand ?? "",

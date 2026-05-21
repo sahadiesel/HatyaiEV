@@ -1,0 +1,56 @@
+---
+description: Firebase deploy สำหรับ HYEV (Firestore rules/indexes, SSL Windows)
+globs: firebase.json,.firebaserc,firestore.rules,firestore.indexes.json,package.json,.github/workflows/firebase-deploy.yml
+alwaysApply: false
+---
+
+# Firebase Deploy — HYEV
+
+## โปรเจกต์
+
+| รายการ | ค่า |
+|--------|-----|
+| โฟลเดอร์ | `D:\HYEV` |
+| Firebase project id | `auto-repair-management` (`.firebaserc`) |
+| Deploy ได้ | Firestore **rules** + **indexes** + Storage **rules** |
+| Storage bucket | `auto-repair-management.firebasestorage.app` |
+
+## คำสั่ง (จาก root)
+
+```bash
+npm run deploy:rules      # firestore.rules เท่านั้น
+npm run deploy:indexes    # firestore.indexes.json เท่านั้น
+npm run deploy:firestore # rules + indexes
+npm run deploy:storage  # storage.rules
+npm run deploy:all        # firestore + storage
+```
+
+ทุกสคริปต์ใช้ `cross-env NODE_OPTIONS=--use-system-ca` ป้องกัน `UNABLE_TO_VERIFY_LEAF_SIGNATURE` บน Windows/corporate network
+
+## ก่อน deploy ครั้งแรก / หลัง SSL error
+
+```powershell
+cd D:\HYEV
+npm run deploy:prepare
+firebase login          # หรือ firebase login --reauth
+npm install             # ติดตั้งบน Windows โดยตรง — อย่า copy node_modules จาก WSL
+npm run deploy:firestore
+```
+
+ถ้ายังมีปัญหา certificate: ชี้ `NODE_EXTRA_CA_CERTS` ไปไฟล์ `.pem` ของ CA บริษัท — **อย่า**ตั้ง `NODE_TLS_REJECT_UNAUTHORIZED=0` ถาวร
+
+## แก้ไขไฟล์ deploy
+
+- แก้ `firestore.rules` หรือ `firestore.indexes.json` แล้วรัน `npm run deploy:firestore`
+- อย่าแก้ rules ใน Console โดยตรงถ้าต้องการให้ repo เป็น source of truth
+
+## CI (GitHub Actions)
+
+- Secret: `FIREBASE_TOKEN` จาก `firebase login:ci`
+- Workflow: `.github/workflows/firebase-deploy.yml` — deploy เมื่อ push `main` ที่แตะไฟล์ Firebase
+
+## อย่าทำ
+
+- อย่า commit `.env.local`
+- อย่า deploy rules แบบ `allow read, write: if true` ขึ้น production
+- อย่า copy `node_modules` ข้าม OS (ไม่มี `.cmd` บน Windows)

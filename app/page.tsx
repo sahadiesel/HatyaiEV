@@ -2,15 +2,18 @@ import Link from "next/link";
 import { DashboardShopSummary } from "@/components/DashboardShopSummary";
 import { listClients } from "@/lib/clients-repository";
 import { listContractors } from "@/lib/contractors-repository";
-import { prisma } from "@/lib/prisma";
+import { listHiringContracts } from "@/lib/hiring-contracts-repository";
+import { listSubcontractAgreements } from "@/lib/subcontract-agreements-repository";
 
 export default async function HomePage() {
-  const [clientRows, contractorRows, hiringContracts, subcontractAgreements] = await Promise.all([
+  const [clientRows, contractorRows, hiringRows, subcontractRows] = await Promise.all([
     listClients(),
     listContractors(),
-    prisma.hiringContract.count().catch(() => 0),
-    prisma.subcontractAgreement.count().catch(() => 0),
+    listHiringContracts(),
+    listSubcontractAgreements(),
   ]);
+  const hiringContracts = hiringRows.length;
+  const subcontractAgreements = subcontractRows.length;
   const clients = clientRows.length;
   const contractors = contractorRows.length;
 

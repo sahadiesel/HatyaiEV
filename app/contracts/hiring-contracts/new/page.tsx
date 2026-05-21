@@ -1,13 +1,10 @@
 import Link from "next/link";
-import { prisma } from "@/lib/prisma";
+import { listClients } from "@/lib/clients-repository";
 import { nextHiringContractCode } from "@/lib/contractCodes";
 import { createHiringContractDraft } from "../actions";
 
 export default async function NewHiringContractPage() {
-  const [clients, previewCode] = await Promise.all([
-    prisma.client.findMany({ orderBy: { name: "asc" } }),
-    nextHiringContractCode(),
-  ]);
+  const [clients, previewCode] = await Promise.all([listClients(), nextHiringContractCode()]);
 
   return (
     <div className="mx-auto max-w-lg space-y-6">

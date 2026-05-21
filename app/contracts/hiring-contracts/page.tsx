@@ -1,11 +1,8 @@
 import Link from "next/link";
-import { prisma } from "@/lib/prisma";
+import { listHiringContracts } from "@/lib/hiring-contracts-repository";
 
 export default async function HiringContractsListPage() {
-  const rows = await prisma.hiringContract.findMany({
-    orderBy: { updatedAt: "desc" },
-    include: { client: true, _count: { select: { vehicles: true, installments: true } } },
-  });
+  const rows = await listHiringContracts();
 
   return (
     <div className="space-y-6">
@@ -36,8 +33,8 @@ export default async function HiringContractsListPage() {
                 </Link>
                 <span className="text-slate-600"> — {r.title || "—"}</span>
                 <p className="text-sm text-slate-500">
-                  ผู้ว่าจ้าง: {r.client.name} · กำหนด {r.vehicleCount} คัน · รายการรถที่กรอกแล้ว {r._count.vehicles} · งวด{" "}
-                  {r._count.installments}
+                  ผู้ว่าจ้าง: {r.clientName} · กำหนด {r.vehicleCount} คัน · รายการรถที่กรอกแล้ว{" "}
+                  {r.vehicles.length} · งวด {r.installments.length}
                 </p>
               </div>
               <div className="flex items-center gap-2">

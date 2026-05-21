@@ -1,15 +1,8 @@
 import Link from "next/link";
-import { prisma } from "@/lib/prisma";
+import { listSubcontractAgreements } from "@/lib/subcontract-agreements-repository";
 
 export default async function SubcontractAgreementsListPage() {
-  const rows = await prisma.subcontractAgreement.findMany({
-    orderBy: { updatedAt: "desc" },
-    include: {
-      contractor: true,
-      hiringContract: { include: { client: true } },
-      _count: { select: { vehicles: true, installments: true } },
-    },
-  });
+  const rows = await listSubcontractAgreements();
 
   return (
     <div className="space-y-6">
@@ -40,8 +33,8 @@ export default async function SubcontractAgreementsListPage() {
                 </Link>
                 <span className="text-slate-600"> — {r.title || "—"}</span>
                 <p className="text-sm text-slate-500">
-                  ผู้รับเหมา: {r.contractor.name} · อ้างอิงสัญญา: {r.hiringContract.code} ({r.hiringContract.client.name}) ·
-                  เลือก {r._count.vehicles} คัน · งวด {r._count.installments}
+                  ผู้รับเหมา: {r.contractorName} · อ้างอิงสัญญา: {r.hiringContractCode} · เลือก{" "}
+                  {r.selectedVehicleIds.length} คัน · งวด {r.installments.length}
                 </p>
               </div>
               <div className="flex items-center gap-2">

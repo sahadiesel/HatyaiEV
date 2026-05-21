@@ -1,23 +1,16 @@
 import { notFound } from "next/navigation";
-import { prisma } from "@/lib/prisma";
+import { listContractors } from "@/lib/contractors-repository";
+import { listHiringContracts } from "@/lib/hiring-contracts-repository";
+import { getSubcontractAgreement } from "@/lib/subcontract-agreements-repository";
 import type { InstallmentRow } from "../../hiring-contracts/[id]/HiringContractEditor";
 import { SubcontractAgreementEditor } from "./SubcontractAgreementEditor";
 
 export default async function SubcontractAgreementDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const [agreement, contractors, hiringList] = await Promise.all([
-    prisma.subcontractAgreement.findUnique({
-      where: { id },
-      include: {
-        vehicles: { include: { hiringContractVehicle: true } },
-        installments: { orderBy: { sequence: "asc" } },
-      },
-    }),
-    prisma.contractor.findMany({ orderBy: { name: "asc" } }),
-    prisma.hiringContract.findMany({
-      orderBy: { updatedAt: "desc" },
-      include: { client: true, vehicles: { orderBy: { lineIndex: "asc" } } },
-    }),
+    getSubcontractAgreement(id),
+    listContractors(),
+    listHiringContracts(),
   ]);
 
   if (!agreement) notFound();
@@ -25,7 +18,7 @@ export default async function SubcontractAgreementDetailPage({ params }: { param
   const hiringOptions = hiringList.map((h) => ({
     id: h.id,
     code: h.code,
-    clientName: h.client.name,
+    clientName: h.clientName,
   }));
 
   const vehiclesByHiringId: Record<
@@ -43,31 +36,29 @@ export default async function SubcontractAgreementDetailPage({ params }: { param
     }));
   }
 
-  const initialSelectedVehicleIds = agreement.vehicles.map((l) => l.hiringContractVehicleId);
-
   const initialInstallments: InstallmentRow[] = agreement.installments.map((m) => ({
     sequence: m.sequence,
     label: m.label,
-    amount: m.amount.toString(),
-    percent: m.percent != null ? m.percent.toString() : "",
+    amount: m.amount,
+    percent: m.percent,
   }));
 
   return (
     <SubcontractAgreementEditor
-        agreementId={agreement.id}
-        code={agreement.code}
-        contractors={contractors}
-        hiringOptions={hiringOptions}
-        vehiclesByHiringId={vehiclesByHiringId}
-        initialContractorId={agreement.contractorId}
-        initialHiringContractId={agreement.hiringContractId}
-        initialTitle={agreement.title}
-        initialPriceExVat={agreement.pricePerVehicleExVat.toString()}
-        initialVatRate={agreement.vatRate.toString()}
-        initialNotes={agreement.notes}
-        initialStatus={agreement.status}
-        initialSelectedVehicleIds={initialSelectedVehicleIds}
-        initialInstallments={initialInstallments}
+      agreementId={agreement.id}
+      code={agreement.code}
+      contractors={contractors.map((c) => ({ id: c.id, name: c.name }))}
+      hiringOptions={hiringOptions}
+      vehiclesByHiringId={vehiclesByHiringId}
+      initialContractorId={agreement.contractorId}
+      initialHiringContractId={agreement.hiringContractId}
+      initialTitle={agreement.title}
+      initialPriceExVat={agreement.pricePerVehicleExVat}
+      initialVatRate={agreement.vatRate}
+      initialNotes={agreement.notes}
+      initialStatus={agreement.status}
+      initialSelectedVehicleIds={agreement.selectedVehicleIds}
+      initialInstallments={initialInstallments}
     />
   );
 }

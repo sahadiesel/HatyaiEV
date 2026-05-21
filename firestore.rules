@@ -66,6 +66,16 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    match /hiringContracts/{docId} {
+      allow read: if isApprovedUser();
+      allow write: if isAdmin();
+    }
+
+    match /subcontractAgreements/{docId} {
+      allow read: if isApprovedUser();
+      allow write: if isAdmin();
+    }
+
     match /nationalIdIndex/{nid} {
       allow read: if true;
       allow create: if signedIn()

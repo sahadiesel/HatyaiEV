@@ -1,7 +1,20 @@
 import { prisma } from "@/lib/prisma";
+import { useFirestorePrimary } from "./data-primary";
+import { listHiringContractsFromFirestore } from "./hiring-contracts-repository";
+import { listSubcontractAgreementsFromFirestore } from "./subcontract-agreements-repository";
 
 function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function nextCodeFromList(codes: string[], prefix: string): string {
+  const re = new RegExp(`^${escapeRegex(prefix)}(\\d+)$`);
+  let max = 0;
+  for (const code of codes) {
+    const m = code.match(re);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `${prefix}${String(max + 1).padStart(3, "0")}`;
 }
 
 /**
@@ -10,17 +23,25 @@ function escapeRegex(s: string) {
 export async function nextHiringContractCode(now = new Date()): Promise<string> {
   const year = now.getFullYear();
   const prefix = `HC-${year}-`;
-  const re = new RegExp(`^${escapeRegex(prefix)}(\\d+)$`);
+
+  if (useFirestorePrimary()) {
+    const rows = await listHiringContractsFromFirestore();
+    if (rows !== null) {
+      return nextCodeFromList(
+        rows.map((r) => r.code),
+        prefix,
+      );
+    }
+  }
+
   const rows = await prisma.hiringContract.findMany({
     where: { code: { startsWith: prefix } },
     select: { code: true },
   });
-  let max = 0;
-  for (const r of rows) {
-    const m = r.code.match(re);
-    if (m) max = Math.max(max, parseInt(m[1], 10));
-  }
-  return `${prefix}${String(max + 1).padStart(3, "0")}`;
+  return nextCodeFromList(
+    rows.map((r) => r.code),
+    prefix,
+  );
 }
 
 /**
@@ -29,15 +50,23 @@ export async function nextHiringContractCode(now = new Date()): Promise<string> 
 export async function nextSubcontractAgreementCode(now = new Date()): Promise<string> {
   const year = now.getFullYear();
   const prefix = `SA-${year}-`;
-  const re = new RegExp(`^${escapeRegex(prefix)}(\\d+)$`);
+
+  if (useFirestorePrimary()) {
+    const rows = await listSubcontractAgreementsFromFirestore();
+    if (rows !== null) {
+      return nextCodeFromList(
+        rows.map((r) => r.code),
+        prefix,
+      );
+    }
+  }
+
   const rows = await prisma.subcontractAgreement.findMany({
     where: { code: { startsWith: prefix } },
     select: { code: true },
   });
-  let max = 0;
-  for (const r of rows) {
-    const m = r.code.match(re);
-    if (m) max = Math.max(max, parseInt(m[1], 10));
-  }
-  return `${prefix}${String(max + 1).padStart(3, "0")}`;
+  return nextCodeFromList(
+    rows.map((r) => r.code),
+    prefix,
+  );
 }

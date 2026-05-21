@@ -105,10 +105,78 @@ async function main() {
   }
   console.log(`contractors: ${contractors.length}`);
 
-  const hiring = await prisma.hiringContract.count();
-  const sub = await prisma.subcontractAgreement.count();
-  console.log(`(SQLite only — สัญญา ${hiring} รับจ้าง / ${sub} ว่าจ้าง ยังไม่ย้าย Firestore)`);
-  console.log("เสร็จ — production จะเห็นลูกค้า/ผู้รับเหมาหลัง deploy");
+  const hiringRows = await prisma.hiringContract.findMany({
+    include: {
+      vehicles: { orderBy: { lineIndex: "asc" } },
+      installments: { orderBy: { sequence: "asc" } },
+    },
+  });
+  for (const c of hiringRows) {
+    await db.collection("hiringContracts").doc(c.id).set({
+      code: c.code,
+      title: c.title,
+      clientId: c.clientId,
+      vehicleCount: c.vehicleCount,
+      pricePerVehicleExVat: String(c.pricePerVehicleExVat),
+      vatRate: String(c.vatRate),
+      status: c.status,
+      notes: c.notes,
+      vehicles: c.vehicles.map((v) => ({
+        id: v.id,
+        lineIndex: v.lineIndex,
+        licensePlate: v.licensePlate,
+        brand: v.brand,
+        model: v.model,
+        year: v.year,
+        color: v.color,
+        engineType: v.engineType,
+        engineSize: v.engineSize,
+        extraNotes: v.extraNotes,
+        contractPhotos: v.contractPhotos,
+        inspectionJson: v.inspectionJson,
+        billingJson: v.billingJson,
+      })),
+      installments: c.installments.map((m) => ({
+        sequence: m.sequence,
+        label: m.label,
+        amount: String(m.amount),
+        percent: m.percent != null ? String(m.percent) : "",
+      })),
+      updatedAt: c.updatedAt,
+    });
+  }
+  console.log(`hiringContracts: ${hiringRows.length}`);
+
+  const subRows = await prisma.subcontractAgreement.findMany({
+    include: {
+      vehicles: true,
+      installments: { orderBy: { sequence: "asc" } },
+    },
+  });
+  for (const a of subRows) {
+    await db.collection("subcontractAgreements").doc(a.id).set({
+      code: a.code,
+      title: a.title,
+      contractorId: a.contractorId,
+      hiringContractId: a.hiringContractId,
+      vehicleCount: a.vehicleCount,
+      pricePerVehicleExVat: String(a.pricePerVehicleExVat),
+      vatRate: String(a.vatRate),
+      status: a.status,
+      notes: a.notes,
+      selectedVehicleIds: a.vehicles.map((v) => v.hiringContractVehicleId),
+      installments: a.installments.map((m) => ({
+        sequence: m.sequence,
+        label: m.label,
+        amount: String(m.amount),
+        percent: m.percent != null ? String(m.percent) : "",
+      })),
+      updatedAt: a.updatedAt,
+    });
+  }
+  console.log(`subcontractAgreements: ${subRows.length}`);
+
+  console.log("เสร็จ — deploy แล้ว production จะอ่าน/เขียนสัญญาจาก Firestore");
 }
 
 main()

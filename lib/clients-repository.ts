@@ -6,6 +6,7 @@ import {
   type ClientRecord,
 } from "./firestore-entities";
 import { canWriteFirestore, useFirestorePrimary } from "./data-primary";
+import { countHiringContractsForClient } from "./hiring-contracts-repository";
 import { newEntityId } from "./new-id";
 import { nextClientCode } from "./partyCodes";
 import { prisma } from "./prisma";
@@ -133,16 +134,9 @@ export async function deleteClientRecord(id: string) {
   const existing = await getClient(id);
   if (!existing) return { ok: false as const, message: "ไม่พบข้อมูล" };
 
-  try {
-    const row = await prisma.client.findUnique({
-      where: { id },
-      include: { _count: { select: { hiringContracts: true } } },
-    });
-    if (row && row._count.hiringContracts > 0) {
-      return { ok: false as const, message: "ลบไม่ได้ — มีสัญญารับจ้างผูกกับผู้ว่าจ้างรายนี้" };
-    }
-  } catch {
-    /* production อาจไม่มี sqlite */
+  const hiringCount = await countHiringContractsForClient(id);
+  if (hiringCount > 0) {
+    return { ok: false as const, message: "ลบไม่ได้ — มีสัญญารับจ้างผูกกับผู้ว่าจ้างรายนี้" };
   }
 
   if (canWriteFirestore()) {

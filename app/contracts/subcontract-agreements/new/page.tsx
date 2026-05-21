@@ -1,15 +1,13 @@
 import Link from "next/link";
-import { prisma } from "@/lib/prisma";
+import { listContractors } from "@/lib/contractors-repository";
+import { listHiringContracts } from "@/lib/hiring-contracts-repository";
 import { nextSubcontractAgreementCode } from "@/lib/contractCodes";
 import { createSubcontractAgreementDraft } from "../actions";
 
 export default async function NewSubcontractAgreementPage() {
   const [contractors, hiring, previewCode] = await Promise.all([
-    prisma.contractor.findMany({ orderBy: { name: "asc" } }),
-    prisma.hiringContract.findMany({
-      orderBy: { updatedAt: "desc" },
-      include: { client: true },
-    }),
+    listContractors(),
+    listHiringContracts(),
     nextSubcontractAgreementCode(),
   ]);
 
@@ -67,7 +65,7 @@ export default async function NewSubcontractAgreementPage() {
               </option>
               {hiring.map((h) => (
                 <option key={h.id} value={h.id}>
-                  {h.code} — {h.client.name}
+                  {h.code} — {h.clientName}
                 </option>
               ))}
             </select>

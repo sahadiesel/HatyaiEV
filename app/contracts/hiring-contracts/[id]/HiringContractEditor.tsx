@@ -12,6 +12,7 @@ import { updateHiringContract } from "../actions";
 
 export type InstallmentRow = { sequence: number; label: string; amount: string; percent: string };
 export type VehicleRow = {
+  id?: string;
   lineIndex: number;
   licensePlate: string;
   brand: string;
