@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { prisma } from "@/lib/prisma";
+import { getClient } from "@/lib/clients-repository";
 import { ClientEditForm } from "./ClientEditForm";
 
 export default async function ClientEditPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const client = await prisma.client.findUnique({ where: { id } });
+  const client = await getClient(id);
   if (!client) notFound();
 
   const formValues = {

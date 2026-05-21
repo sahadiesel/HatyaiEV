@@ -1,27 +1,18 @@
 import Link from "next/link";
 import { DashboardShopSummary } from "@/components/DashboardShopSummary";
-import {
-  countFirestoreCollection,
-} from "@/lib/firestore-entities";
-import { firestoreCollections } from "@/lib/firestore";
+import { listClients } from "@/lib/clients-repository";
+import { listContractors } from "@/lib/contractors-repository";
 import { prisma } from "@/lib/prisma";
 
-async function countWithFirestore(
-  firestoreCollection: string,
-  prismaCount: () => Promise<number>,
-): Promise<number> {
-  const fs = await countFirestoreCollection(firestoreCollection);
-  if (fs !== null) return fs;
-  return prismaCount();
-}
-
 export default async function HomePage() {
-  const [clients, contractors, hiringContracts, subcontractAgreements] = await Promise.all([
-    countWithFirestore(firestoreCollections.clients, () => prisma.client.count()),
-    countWithFirestore(firestoreCollections.contractors, () => prisma.contractor.count()),
-    prisma.hiringContract.count(),
-    prisma.subcontractAgreement.count(),
+  const [clientRows, contractorRows, hiringContracts, subcontractAgreements] = await Promise.all([
+    listClients(),
+    listContractors(),
+    prisma.hiringContract.count().catch(() => 0),
+    prisma.subcontractAgreement.count().catch(() => 0),
   ]);
+  const clients = clientRows.length;
+  const contractors = contractorRows.length;
 
   return (
     <div className="space-y-6">

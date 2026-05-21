@@ -1,16 +1,16 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { prisma } from "@/lib/prisma";
+import { getContractor } from "@/lib/contractors-repository";
 import { ContractorEditForm } from "./ContractorEditForm";
 
 export default async function ContractorEditPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const contractor = await prisma.contractor.findUnique({ where: { id } });
+  const contractor = await getContractor(id);
   if (!contractor) notFound();
 
   const formValues = {
     id: contractor.id,
-    code: contractor.code ?? null,
+    code: contractor.code,
     name: contractor.name,
     taxId: contractor.taxId,
     address: contractor.address,
@@ -18,7 +18,7 @@ export default async function ContractorEditPage({ params }: { params: Promise<{
     email: contractor.email,
     bankName: contractor.bankName,
     bankAccount: contractor.bankAccount,
-    defaultWhtPercent: contractor.defaultWhtPercent.toString(),
+    defaultWhtPercent: contractor.defaultWhtPercent,
     notes: contractor.notes,
   };
 

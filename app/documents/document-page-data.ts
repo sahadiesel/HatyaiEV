@@ -1,5 +1,7 @@
 import type { DocumentKind } from "@prisma/client";
 import { notFound } from "next/navigation";
+import { listClients } from "@/lib/clients-repository";
+import { listContractors } from "@/lib/contractors-repository";
 import { prisma } from "@/lib/prisma";
 import {
   defaultCommercialMeta,
@@ -11,23 +13,25 @@ import {
 } from "@/lib/documents/types";
 
 export async function loadClientsForDocument() {
-  return prisma.client.findMany({
-    orderBy: { name: "asc" },
-    select: { id: true, name: true, taxId: true, address: true, phone: true },
-  });
+  const rows = await listClients();
+  return rows.map((c) => ({
+    id: c.id,
+    name: c.name,
+    taxId: c.taxId,
+    address: c.address,
+    phone: c.phone,
+  }));
 }
 
 export async function loadContractorsForDocument() {
-  return prisma.contractor.findMany({
-    orderBy: { name: "asc" },
-    select: {
-      id: true,
-      name: true,
-      taxId: true,
-      address: true,
-      defaultWhtPercent: true,
-    },
-  });
+  const rows = await listContractors();
+  return rows.map((c) => ({
+    id: c.id,
+    name: c.name,
+    taxId: c.taxId,
+    address: c.address,
+    defaultWhtPercent: c.defaultWhtPercent,
+  }));
 }
 
 export async function loadCommercialDocument(id: string, kind: DocumentKind) {

@@ -113,7 +113,17 @@ git push origin main
 
 รอ rollout อัตโนมัติจาก GitHub (หรือ Roll out ใน Console → App Hosting → evbackend)
 
-**หมายเหตุ:** ข้อมูล Prisma/SQLite บน cloud (`file:./dev.db`) แยกจากเครื่อง dev — ตัวเลข 0 บน production จนกว่าจะกรอกข้อมูลใหม่หรือย้าย DB
+**ข้อมูลบน Firestore (production):**
+
+| Collection | ข้อมูล |
+|------------|--------|
+| `companySettings/main` | ตั้งค่าร้าน |
+| `clients` | ผู้ว่าจ้าง — **บันทึกหลักเมื่อมี Firebase** |
+| `contractors` | ผู้รับเหมา — **บันทึกหลักเมื่อมี Firebase** |
+
+สัญญารับจ้าง/ว่าจ้าง ยังอยู่ SQLite ชั่วคราวบน server — จะย้าย Firestore ในรอบถัดไป
+
+ย้ายข้อมูลจากเครื่อง dev ครั้งเดียว: `npm run db:migrate-firestore` (ต้องมี `serviceAccountKey.json`)
 
 ## ความปลอดภัย
 

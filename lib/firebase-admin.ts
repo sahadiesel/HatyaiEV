@@ -13,7 +13,16 @@ export function getFirebaseAdminApp(): App | null {
     }
     const raw = process.env.FIREBASE_CONFIG;
     if (raw?.trim()) {
-      cachedApp = initializeApp(JSON.parse(raw) as object);
+      try {
+        cachedApp = initializeApp(JSON.parse(raw) as object);
+        return cachedApp;
+      } catch {
+        /* ลองวิธีอื่น */
+      }
+    }
+    const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim();
+    if (projectId) {
+      cachedApp = initializeApp({ projectId });
       return cachedApp;
     }
     if (process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT) {
