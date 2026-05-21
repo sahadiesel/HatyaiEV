@@ -1,4 +1,4 @@
-import { useFirestorePrimary } from "@/lib/data-primary";
+import { isFirestorePrimary } from "@/lib/data-primary";
 import {
   listClientCodesFromFirestore,
   listContractorCodesFromFirestore,
@@ -25,7 +25,7 @@ export async function nextClientCode(now = new Date()): Promise<string> {
   const prefix = `CL-${year}-`;
   const codes: string[] = [];
 
-  if (useFirestorePrimary()) {
+  if (isFirestorePrimary()) {
     codes.push(...(await listClientCodesFromFirestore()));
   }
   try {
@@ -48,7 +48,7 @@ export async function nextContractorCode(now = new Date()): Promise<string> {
   const prefix = `CR-${year}-`;
   const codes: string[] = [];
 
-  if (useFirestorePrimary()) {
+  if (isFirestorePrimary()) {
     codes.push(...(await listContractorCodesFromFirestore()));
   }
   try {

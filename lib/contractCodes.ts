@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { useFirestorePrimary } from "./data-primary";
+import { isFirestorePrimary } from "./data-primary";
 import { listHiringContractsFromFirestore } from "./hiring-contracts-repository";
 import { listSubcontractAgreementsFromFirestore } from "./subcontract-agreements-repository";
 
@@ -24,7 +24,7 @@ export async function nextHiringContractCode(now = new Date()): Promise<string> 
   const year = now.getFullYear();
   const prefix = `HC-${year}-`;
 
-  if (useFirestorePrimary()) {
+  if (isFirestorePrimary()) {
     const rows = await listHiringContractsFromFirestore();
     if (rows !== null) {
       return nextCodeFromList(
@@ -51,7 +51,7 @@ export async function nextSubcontractAgreementCode(now = new Date()): Promise<st
   const year = now.getFullYear();
   const prefix = `SA-${year}-`;
 
-  if (useFirestorePrimary()) {
+  if (isFirestorePrimary()) {
     const rows = await listSubcontractAgreementsFromFirestore();
     if (rows !== null) {
       return nextCodeFromList(

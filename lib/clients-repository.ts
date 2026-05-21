@@ -5,7 +5,7 @@ import {
   upsertClientFirestore,
   type ClientRecord,
 } from "./firestore-entities";
-import { canWriteFirestore, useFirestorePrimary } from "./data-primary";
+import { canWriteFirestore, isFirestorePrimary } from "./data-primary";
 import { countHiringContractsForClient } from "./hiring-contracts-repository";
 import { newEntityId } from "./new-id";
 import { nextClientCode } from "./partyCodes";
@@ -14,7 +14,7 @@ import { prisma } from "./prisma";
 export type { ClientRecord };
 
 export async function listClients(): Promise<ClientRecord[]> {
-  if (useFirestorePrimary()) {
+  if (isFirestorePrimary()) {
     const fs = await listClientsFromFirestore();
     if (fs !== null) return fs;
   }
@@ -32,7 +32,7 @@ export async function listClients(): Promise<ClientRecord[]> {
 }
 
 export async function getClient(id: string): Promise<ClientRecord | null> {
-  if (useFirestorePrimary()) {
+  if (isFirestorePrimary()) {
     const fs = await getClientFirestore(id);
     if (fs) return fs;
   }

@@ -6,7 +6,7 @@ import {
   type ContractorRecord,
 } from "./firestore-entities";
 import { Prisma } from "@prisma/client";
-import { canWriteFirestore, useFirestorePrimary } from "./data-primary";
+import { canWriteFirestore, isFirestorePrimary } from "./data-primary";
 import { newEntityId } from "./new-id";
 import { nextContractorCode } from "./partyCodes";
 import { prisma } from "./prisma";
@@ -14,7 +14,7 @@ import { prisma } from "./prisma";
 export type { ContractorRecord };
 
 export async function listContractors(): Promise<ContractorRecord[]> {
-  if (useFirestorePrimary()) {
+  if (isFirestorePrimary()) {
     const fs = await listContractorsFromFirestore();
     if (fs !== null) return fs;
   }
@@ -35,7 +35,7 @@ export async function listContractors(): Promise<ContractorRecord[]> {
 }
 
 export async function getContractor(id: string): Promise<ContractorRecord | null> {
-  if (useFirestorePrimary()) {
+  if (isFirestorePrimary()) {
     const fs = await getContractorFirestore(id);
     if (fs) return fs;
   }

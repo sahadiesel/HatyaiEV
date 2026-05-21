@@ -23,6 +23,16 @@ export type HiringContractInstallmentFs = {
   percent: string;
 };
 
+/** ข้อมูลรถตอนบันทึก — ไม่บังคับ inspection/billing (คงค่าเดิมจาก Firestore) */
+export type HiringContractVehicleSaveFs = Omit<
+  HiringContractVehicleFs,
+  "inspectionJson" | "billingJson" | "id"
+> & {
+  id?: string;
+  inspectionJson?: string;
+  billingJson?: string;
+};
+
 export type HiringContractFs = {
   id: string;
   code: string;

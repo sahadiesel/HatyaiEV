@@ -3,7 +3,7 @@ import type {
   SubcontractAgreementFs,
   SubcontractInstallmentFs,
 } from "./contracts-firestore-types";
-import { canWriteFirestore, useFirestorePrimary } from "./data-primary";
+import { canWriteFirestore, isFirestorePrimary } from "./data-primary";
 import { getAdminFirestore } from "./firebase-admin";
 import { firestoreCollections } from "./firestore";
 import { newEntityId } from "./new-id";
@@ -110,7 +110,7 @@ async function loadSubcontractFromPrisma(id: string): Promise<SubcontractAgreeme
 }
 
 export async function getSubcontractAgreement(id: string): Promise<SubcontractAgreementFs | null> {
-  if (useFirestorePrimary()) {
+  if (isFirestorePrimary()) {
     const fs = await getSubcontractAgreementFirestore(id);
     if (fs) return fs;
   }
@@ -124,7 +124,7 @@ export type SubcontractListItem = SubcontractAgreementFs & {
 
 export async function listSubcontractAgreements(): Promise<SubcontractListItem[]> {
   let rows: SubcontractAgreementFs[] | null = null;
-  if (useFirestorePrimary()) {
+  if (isFirestorePrimary()) {
     rows = await listSubcontractAgreementsFromFirestore();
   }
   if (rows === null) {

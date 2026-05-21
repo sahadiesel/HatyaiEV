@@ -3,8 +3,9 @@ import type {
   HiringContractFs,
   HiringContractInstallmentFs,
   HiringContractVehicleFs,
+  HiringContractVehicleSaveFs,
 } from "./contracts-firestore-types";
-import { canWriteFirestore, useFirestorePrimary } from "./data-primary";
+import { canWriteFirestore, isFirestorePrimary } from "./data-primary";
 import { getAdminFirestore } from "./firebase-admin";
 import { firestoreCollections } from "./firestore";
 import { newEntityId } from "./new-id";
@@ -151,7 +152,7 @@ async function loadHiringFromPrisma(id: string): Promise<HiringContractFs | null
 }
 
 export async function getHiringContract(id: string): Promise<HiringContractFs | null> {
-  if (useFirestorePrimary()) {
+  if (isFirestorePrimary()) {
     const fs = await getHiringContractFirestore(id);
     if (fs) return fs;
   }
@@ -162,7 +163,7 @@ export type HiringContractListItem = HiringContractFs & { clientName: string };
 
 export async function listHiringContracts(): Promise<HiringContractListItem[]> {
   let rows: HiringContractFs[] | null = null;
-  if (useFirestorePrimary()) {
+  if (isFirestorePrimary()) {
     rows = await listHiringContractsFromFirestore();
   }
   if (rows === null) {
@@ -229,10 +230,7 @@ export type SaveHiringContractInput = {
   vatRate: string;
   notes: string;
   status: ContractDocStatus;
-  vehicles: Omit<HiringContractVehicleFs, "inspectionJson" | "billingJson"> & {
-    inspectionJson?: string;
-    billingJson?: string;
-  }[];
+  vehicles: HiringContractVehicleSaveFs[];
   installments: HiringContractInstallmentFs[];
 };
 
