@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { loadCompanySettingsForDisplay } from "@/lib/company-settings-server";
+import { DashboardShopSummary } from "@/components/DashboardShopSummary";
 import {
   countFirestoreCollection,
 } from "@/lib/firestore-entities";
@@ -16,14 +16,12 @@ async function countWithFirestore(
 }
 
 export default async function HomePage() {
-  const [clients, contractors, hiringContracts, subcontractAgreements, settings] =
-    await Promise.all([
-      countWithFirestore(firestoreCollections.clients, () => prisma.client.count()),
-      countWithFirestore(firestoreCollections.contractors, () => prisma.contractor.count()),
-      prisma.hiringContract.count(),
-      prisma.subcontractAgreement.count(),
-      loadCompanySettingsForDisplay(),
-    ]);
+  const [clients, contractors, hiringContracts, subcontractAgreements] = await Promise.all([
+    countWithFirestore(firestoreCollections.clients, () => prisma.client.count()),
+    countWithFirestore(firestoreCollections.contractors, () => prisma.contractor.count()),
+    prisma.hiringContract.count(),
+    prisma.subcontractAgreement.count(),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -42,25 +40,7 @@ export default async function HomePage() {
         <StatCard title="สัญญาว่าจ้าง" value={subcontractAgreements} href="/contracts/subcontract-agreements" />
       </div>
 
-      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="font-semibold text-slate-900">ข้อมูลร้าน (จากตั้งค่า)</h2>
-        <dl className="mt-3 space-y-1 text-sm text-slate-700">
-          <div>
-            <dt className="font-medium text-slate-500">ชื่อ</dt>
-            <dd>{settings?.companyName ?? "— ยังไม่ได้ตั้งค่า —"}</dd>
-          </div>
-          <div>
-            <dt className="font-medium text-slate-500">เลขผู้เสียภาษี</dt>
-            <dd>{settings?.taxId ?? "—"}</dd>
-          </div>
-        </dl>
-        <Link
-          href="/settings"
-          className="mt-4 inline-block text-sm font-medium text-blue-700 hover:underline"
-        >
-          ไปแก้ไขตั้งค่าร้าน →
-        </Link>
-      </section>
+      <DashboardShopSummary />
     </div>
   );
 }
