@@ -1,4 +1,4 @@
-import { getAdminFirestore } from "./firebase-admin";
+import { hasAdminCredentialSource } from "./firebase-admin";
 
 const FIREBASE_ENV_KEYS = [
   "NEXT_PUBLIC_FIREBASE_API_KEY",
@@ -15,7 +15,7 @@ export function isFirestorePrimary(): boolean {
 }
 
 export function canWriteFirestore(): boolean {
-  return isFirestorePrimary() && Boolean(getAdminFirestore());
+  return isFirestorePrimary() && hasAdminCredentialSource();
 }
 
 export const FIRESTORE_WRITE_HINT =

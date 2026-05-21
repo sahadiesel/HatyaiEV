@@ -82,13 +82,21 @@ export async function listDocuments(kind: DocumentKind): Promise<DocumentListIte
       .get();
     const docs = snap.docs.map((doc) => parseDoc(doc.id, doc.data() as Record<string, unknown>));
     return Promise.all(docs.map(enrichListItem));
-  } catch {
-    const snap = await firestore.collection(firestoreCollections.documents).where("kind", "==", kind).get();
-    const docs = snap.docs
-      .map((doc) => parseDoc(doc.id, doc.data() as Record<string, unknown>))
-      .sort((a, b) => b.issueDate.getTime() - a.issueDate.getTime())
-      .slice(0, 200);
-    return Promise.all(docs.map(enrichListItem));
+  } catch (indexError) {
+    try {
+      const snap = await firestore
+        .collection(firestoreCollections.documents)
+        .where("kind", "==", kind)
+        .get();
+      const docs = snap.docs
+        .map((doc) => parseDoc(doc.id, doc.data() as Record<string, unknown>))
+        .sort((a, b) => b.issueDate.getTime() - a.issueDate.getTime())
+        .slice(0, 200);
+      return Promise.all(docs.map(enrichListItem));
+    } catch (e) {
+      console.error("[listDocuments]", indexError, e);
+      return [];
+    }
   }
 }
 

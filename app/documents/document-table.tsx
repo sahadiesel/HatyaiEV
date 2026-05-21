@@ -1,5 +1,6 @@
 import type { DocumentKind } from "@/lib/documents-firestore-types";
 import Link from "next/link";
+import { AdminSetupNotice } from "@/components/AdminSetupNotice";
 import { DocumentPrintLink } from "@/components/documents/DocumentPrintLink";
 import { listDocuments } from "@/lib/documents-repository";
 import { DOCUMENT_KIND_ROUTES } from "@/lib/documents/types";
@@ -18,7 +19,9 @@ export async function DocumentTable({ kind }: { kind: DocumentKind }) {
   const rows = await listDocuments(kind);
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+    <div className="space-y-3">
+      <AdminSetupNotice />
+      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
       <table className="w-full min-w-[720px] text-left text-sm">
         <thead className="border-b border-slate-200 bg-slate-50 text-slate-600">
           <tr>
@@ -81,6 +84,7 @@ export async function DocumentTable({ kind }: { kind: DocumentKind }) {
           )}
         </tbody>
       </table>
+    </div>
     </div>
   );
 }
