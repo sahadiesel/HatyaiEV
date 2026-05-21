@@ -8,17 +8,12 @@ import {
   type Timestamp,
 } from "firebase/firestore";
 import { getFirestoreDb } from "./firebase";
+import {
+  companySettingsDocId,
+  firestoreCollections,
+} from "./firestore-collections";
 
-/** ชื่อคอลเลกชัน — ใช้ค่าคงที่เดียวกันทั้งแอปเพื่อไม่ให้สะกดผิด */
-export const firestoreCollections = {
-  companySettings: "companySettings",
-  clients: "clients",
-  contractors: "contractors",
-  hiringContracts: "hiringContracts",
-  subcontractAgreements: "subcontractAgreements",
-} as const;
-
-export const companySettingsDocId = "main";
+export { companySettingsDocId, firestoreCollections } from "./firestore-collections";
 
 export type CompanySettingsFirestorePayload = {
   companyName: string;

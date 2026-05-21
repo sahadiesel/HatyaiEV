@@ -1,4 +1,4 @@
-import { companySettingsDocId, firestoreCollections } from "./firestore";
+import { companySettingsDocId, firestoreCollections } from "./firestore-collections";
 import { getAdminFirestore } from "./firebase-admin";
 import { prisma } from "./prisma";
 

@@ -7,7 +7,7 @@ import type {
 } from "./contracts-firestore-types";
 import { canWriteFirestore, isFirestorePrimary } from "./data-primary";
 import { getAdminFirestore } from "./firebase-admin";
-import { firestoreCollections } from "./firestore";
+import { firestoreCollections } from "./firestore-collections";
 import { newEntityId } from "./new-id";
 import { nextHiringContractCode } from "./contractCodes";
 import { getClient } from "./clients-repository";

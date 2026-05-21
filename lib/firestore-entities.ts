@@ -1,5 +1,5 @@
 import { getAdminFirestore } from "./firebase-admin";
-import { firestoreCollections } from "./firestore";
+import { firestoreCollections } from "./firestore-collections";
 
 export type ClientRecord = {
   id: string;
