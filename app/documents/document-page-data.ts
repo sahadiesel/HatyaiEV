@@ -1,8 +1,8 @@
-import type { DocumentKind } from "@prisma/client";
+import type { DocumentKind } from "@/lib/documents-firestore-types";
 import { notFound } from "next/navigation";
 import { listClients } from "@/lib/clients-repository";
 import { listContractors } from "@/lib/contractors-repository";
-import { prisma } from "@/lib/prisma";
+import { getDocument } from "@/lib/documents-repository";
 import {
   defaultCommercialMeta,
   defaultWithholdingMeta,
@@ -35,7 +35,7 @@ export async function loadContractorsForDocument() {
 }
 
 export async function loadCommercialDocument(id: string, kind: DocumentKind) {
-  const doc = await prisma.document.findUnique({ where: { id } });
+  const doc = await getDocument(id);
   if (!doc || doc.kind !== kind) notFound();
   return {
     id: doc.id,
@@ -49,7 +49,7 @@ export async function loadCommercialDocument(id: string, kind: DocumentKind) {
 }
 
 export async function loadWithholdingDocument(id: string) {
-  const doc = await prisma.document.findUnique({ where: { id } });
+  const doc = await getDocument(id);
   if (!doc || doc.kind !== "WITHHOLDING_TAX") notFound();
   return {
     id: doc.id,

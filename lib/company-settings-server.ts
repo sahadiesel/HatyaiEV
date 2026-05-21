@@ -1,7 +1,6 @@
 import { companySettingsDocId, firestoreCollections } from "./firestore-collections";
-import { canWriteFirestore, isFirestorePrimary } from "./data-primary";
+import { canWriteFirestore, FIRESTORE_WRITE_HINT } from "./data-primary";
 import { getAdminFirestore } from "./firebase-admin";
-import { prisma } from "./prisma";
 
 export type CompanySettingsData = {
   companyName: string;
@@ -54,68 +53,28 @@ async function readCompanySettingsFromAdmin(): Promise<CompanySettingsFull | nul
   }
 }
 
-/** อ่านตั้งค่าร้าน — Firestore เมื่อมี Firebase config (local = production) */
 export async function loadCompanySettingsForDisplay(): Promise<CompanySettingsData | null> {
-  if (isFirestorePrimary()) {
-    const fs = await readCompanySettingsFromAdmin();
-    if (fs?.companyName.trim()) {
-      return {
-        companyName: fs.companyName,
-        address: fs.address,
-        taxId: fs.taxId,
-        phone: fs.phone,
-        email: fs.email,
-      };
-    }
-    return null;
-  }
-
-  try {
-    const row = await prisma.companySettings.findUnique({ where: { id: 1 } });
-    if (row?.companyName?.trim()) {
-      return {
-        companyName: row.companyName,
-        address: row.address,
-        taxId: row.taxId,
-        phone: row.phone,
-        email: row.email,
-      };
-    }
-  } catch (e) {
-    console.error("[loadCompanySettingsForDisplay] prisma", e);
+  const fs = await readCompanySettingsFromAdmin();
+  if (fs?.companyName.trim()) {
+    return {
+      companyName: fs.companyName,
+      address: fs.address,
+      taxId: fs.taxId,
+      phone: fs.phone,
+      email: fs.email,
+    };
   }
   return null;
 }
 
-/** อ่านตั้งค่าร้าน + คำนำหน้าเอกสาร */
 export async function loadCompanySettingsFull(): Promise<CompanySettingsFull | null> {
-  if (isFirestorePrimary()) {
-    return readCompanySettingsFromAdmin();
-  }
-  try {
-    const row = await prisma.companySettings.findUnique({ where: { id: 1 } });
-    if (!row) return null;
-    return {
-      companyName: row.companyName,
-      address: row.address,
-      taxId: row.taxId,
-      phone: row.phone,
-      email: row.email,
-      docPrefixInvoice: row.docPrefixInvoice,
-      docPrefixTaxInvoice: row.docPrefixTaxInvoice,
-      docPrefixReceipt: row.docPrefixReceipt,
-      docPrefixPo: row.docPrefixPo,
-      docPrefixWht: row.docPrefixWht,
-    };
-  } catch {
-    return null;
-  }
+  return readCompanySettingsFromAdmin();
 }
 
 export async function saveCompanySettingsAdmin(payload: CompanySettingsFull): Promise<void> {
-  if (!canWriteFirestore()) throw new Error("Firestore Admin ไม่พร้อม");
+  if (!canWriteFirestore()) throw new Error(FIRESTORE_WRITE_HINT);
   const db = getAdminFirestore();
-  if (!db) throw new Error("Firestore Admin ไม่พร้อม");
+  if (!db) throw new Error(FIRESTORE_WRITE_HINT);
   await db
     .collection(firestoreCollections.companySettings)
     .doc(companySettingsDocId)

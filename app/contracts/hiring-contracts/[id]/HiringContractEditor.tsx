@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { ContractDocStatus, VehicleEngineType } from "@prisma/client";
+import type { ContractDocStatus, VehicleEngineType } from "@/lib/contracts-firestore-types";
 import { ContractEditStickyBar } from "@/components/ContractEditStickyBar";
 import { VehiclePhotoUpload } from "@/components/VehiclePhotoUpload";
 import type { ContractPhoto } from "@/lib/vehicle-inspection-items";

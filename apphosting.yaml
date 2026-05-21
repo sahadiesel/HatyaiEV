@@ -7,12 +7,6 @@ runConfig:
   concurrency: 80
 
 env:
-  - variable: DATABASE_URL
-    value: file:./dev.db
-    availability:
-      - BUILD
-      - RUNTIME
-
   - variable: NEXT_PUBLIC_FIREBASE_API_KEY
     secret: hyevFirebaseApiKey
     availability:

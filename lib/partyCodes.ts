@@ -1,9 +1,4 @@
-import { isFirestorePrimary } from "@/lib/data-primary";
-import {
-  listClientCodesFromFirestore,
-  listContractorCodesFromFirestore,
-} from "@/lib/firestore-entities";
-import { prisma } from "@/lib/prisma";
+import { listClientCodesFromFirestore, listContractorCodesFromFirestore } from "@/lib/firestore-entities";
 
 function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -23,36 +18,12 @@ function nextCodeFromList(codes: string[], prefix: string): string {
 export async function nextClientCode(now = new Date()): Promise<string> {
   const year = now.getFullYear();
   const prefix = `CL-${year}-`;
-
-  if (isFirestorePrimary()) {
-    return nextCodeFromList(await listClientCodesFromFirestore(), prefix);
-  }
-
-  const rows = await prisma.client.findMany({
-    where: { code: { startsWith: prefix } },
-    select: { code: true },
-  });
-  return nextCodeFromList(
-    rows.map((r) => r.code).filter((c): c is string => Boolean(c)),
-    prefix,
-  );
+  return nextCodeFromList(await listClientCodesFromFirestore(), prefix);
 }
 
 /** ผู้รับเหมา: CR-{ปี}-{ลำดับ} */
 export async function nextContractorCode(now = new Date()): Promise<string> {
   const year = now.getFullYear();
   const prefix = `CR-${year}-`;
-
-  if (isFirestorePrimary()) {
-    return nextCodeFromList(await listContractorCodesFromFirestore(), prefix);
-  }
-
-  const rows = await prisma.contractor.findMany({
-    where: { code: { startsWith: prefix } },
-    select: { code: true },
-  });
-  return nextCodeFromList(
-    rows.map((r) => r.code).filter((c): c is string => Boolean(c)),
-    prefix,
-  );
+  return nextCodeFromList(await listContractorCodesFromFirestore(), prefix);
 }

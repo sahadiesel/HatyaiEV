@@ -5,6 +5,7 @@ export const firestoreCollections = {
   contractors: "contractors",
   hiringContracts: "hiringContracts",
   subcontractAgreements: "subcontractAgreements",
+  documents: "documents",
 } as const;
 
 export const companySettingsDocId = "main";

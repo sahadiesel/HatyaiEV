@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { ContractDocStatus } from "@prisma/client";
+import type { ContractDocStatus } from "@/lib/contracts-firestore-types";
 import { ContractEditStickyBar } from "@/components/ContractEditStickyBar";
 import { updateSubcontractAgreement } from "../actions";
 import type { InstallmentRow } from "../../hiring-contracts/[id]/HiringContractEditor";

@@ -5,13 +5,12 @@ import type {
   HiringContractVehicleFs,
   HiringContractVehicleSaveFs,
 } from "./contracts-firestore-types";
-import { canWriteFirestore, isFirestorePrimary } from "./data-primary";
+import { canWriteFirestore } from "./data-primary";
 import { getAdminFirestore } from "./firebase-admin";
 import { firestoreCollections } from "./firestore-collections";
 import { newEntityId } from "./new-id";
 import { nextHiringContractCode } from "./contractCodes";
 import { getClient } from "./clients-repository";
-import { prisma } from "./prisma";
 
 function db() {
   return getAdminFirestore();
@@ -102,75 +101,18 @@ export async function listHiringContractCodesFromFirestore(): Promise<string[]> 
 }
 
 export async function countHiringContractsForClient(clientId: string): Promise<number> {
-  if (isFirestorePrimary()) {
-    const rows = await listHiringContractsFromFirestore();
-    return (rows ?? []).filter((r) => r.clientId === clientId).length;
-  }
-  return prisma.hiringContract.count({ where: { clientId } });
-}
-
-async function loadHiringFromPrisma(id: string): Promise<HiringContractFs | null> {
-  const c = await prisma.hiringContract.findUnique({
-    where: { id },
-    include: { vehicles: { orderBy: { lineIndex: "asc" } }, installments: { orderBy: { sequence: "asc" } } },
-  });
-  if (!c) return null;
-  return {
-    id: c.id,
-    code: c.code,
-    title: c.title,
-    clientId: c.clientId,
-    vehicleCount: c.vehicleCount,
-    pricePerVehicleExVat: c.pricePerVehicleExVat.toString(),
-    vatRate: c.vatRate.toString(),
-    status: c.status as ContractDocStatus,
-    notes: c.notes,
-    vehicles: c.vehicles.map((v) => ({
-      id: v.id,
-      lineIndex: v.lineIndex,
-      licensePlate: v.licensePlate,
-      brand: v.brand,
-      model: v.model,
-      year: v.year,
-      color: v.color,
-      engineType: v.engineType as HiringContractVehicleFs["engineType"],
-      engineSize: v.engineSize,
-      extraNotes: v.extraNotes,
-      contractPhotos: v.contractPhotos,
-      inspectionJson: v.inspectionJson,
-      billingJson: v.billingJson,
-    })),
-    installments: c.installments.map((m) => ({
-      sequence: m.sequence,
-      label: m.label,
-      amount: m.amount.toString(),
-      percent: m.percent != null ? m.percent.toString() : "",
-    })),
-  };
+  const rows = await listHiringContractsFromFirestore();
+  return (rows ?? []).filter((r) => r.clientId === clientId).length;
 }
 
 export async function getHiringContract(id: string): Promise<HiringContractFs | null> {
-  if (isFirestorePrimary()) {
-    return getHiringContractFirestore(id);
-  }
-  return loadHiringFromPrisma(id);
+  return getHiringContractFirestore(id);
 }
 
 export type HiringContractListItem = HiringContractFs & { clientName: string };
 
 export async function listHiringContracts(): Promise<HiringContractListItem[]> {
-  const rows = isFirestorePrimary()
-    ? ((await listHiringContractsFromFirestore()) ?? [])
-    : (
-        await Promise.all(
-          (
-            await prisma.hiringContract.findMany({
-              orderBy: { updatedAt: "desc" },
-              include: { vehicles: true, installments: true },
-            })
-          ).map(async (c) => (await loadHiringFromPrisma(c.id))!),
-        )
-      ).filter(Boolean);
+  const rows = (await listHiringContractsFromFirestore()) ?? [];
   const out: HiringContractListItem[] = [];
   for (const r of rows) {
     const client = await getClient(r.clientId);

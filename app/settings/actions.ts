@@ -5,8 +5,7 @@ import {
   saveCompanySettingsAdmin,
   type CompanySettingsFull,
 } from "@/lib/company-settings-server";
-import { canWriteFirestore, FIRESTORE_WRITE_HINT, isFirestorePrimary } from "@/lib/data-primary";
-import { prisma } from "@/lib/prisma";
+import { canWriteFirestore, FIRESTORE_WRITE_HINT } from "@/lib/data-primary";
 import { revalidatePath } from "next/cache";
 
 export type SaveCompanySettingsResult =
@@ -27,32 +26,15 @@ export async function saveCompanySettings(formData: FormData): Promise<SaveCompa
     docPrefixWht: String(formData.get("docPrefixWht") ?? "WHT"),
   };
 
-  if (isFirestorePrimary()) {
-    if (!canWriteFirestore()) {
-      return { ok: false, message: FIRESTORE_WRITE_HINT };
-    }
-    try {
-      await saveCompanySettingsAdmin(payload);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "บันทึก Firestore ไม่สำเร็จ";
-      console.error("[saveCompanySettings] firestore", e);
-      return { ok: false, message };
-    }
-    revalidatePath("/settings");
-    revalidatePath("/");
-    return { ok: true };
+  if (!canWriteFirestore()) {
+    return { ok: false, message: FIRESTORE_WRITE_HINT };
   }
 
   try {
-    await prisma.companySettings.upsert({
-      where: { id: 1 },
-      create: { id: 1, ...payload },
-      update: payload,
-    });
+    await saveCompanySettingsAdmin(payload);
   } catch (e) {
-    const message =
-      e instanceof Error ? e.message : typeof e === "string" ? e : "บันทึก SQLite ไม่สำเร็จ";
-    console.error("[saveCompanySettings] prisma", e);
+    const message = e instanceof Error ? e.message : "บันทึก Firestore ไม่สำเร็จ";
+    console.error("[saveCompanySettings]", e);
     return { ok: false, message };
   }
 

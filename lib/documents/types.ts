@@ -1,4 +1,4 @@
-import type { DocumentKind } from "@prisma/client";
+import type { DocumentKind } from "@/lib/documents-firestore-types";
 
 export type DocumentLineItem = {
   sequence: number;

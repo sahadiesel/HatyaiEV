@@ -1,5 +1,7 @@
 export type ContractDocStatus = "DRAFT" | "ACTIVE" | "COMPLETED" | "CANCELLED";
 
+export type VehicleEngineType = "GASOLINE" | "DIESEL" | "ELECTRIC";
+
 export type HiringContractVehicleFs = {
   id: string;
   lineIndex: number;
@@ -8,7 +10,7 @@ export type HiringContractVehicleFs = {
   model: string;
   year: string;
   color: string;
-  engineType: "GASOLINE" | "DIESEL" | "ELECTRIC";
+  engineType: VehicleEngineType;
   engineSize: string;
   extraNotes: string;
   contractPhotos: string;

@@ -1,6 +1,6 @@
 "use client";
 
-import type { DocumentKind } from "@prisma/client";
+import type { DocumentKind } from "@/lib/documents-firestore-types";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";

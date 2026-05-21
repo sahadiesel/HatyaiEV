@@ -1,6 +1,4 @@
 import { loadCompanySettingsFull } from "@/lib/company-settings-server";
-import { isFirestorePrimary } from "@/lib/data-primary";
-import { prisma } from "@/lib/prisma";
 
 /** Logo ใน Firebase Storage — Company/Logo_HYEV.png */
 export const COMPANY_LOGO_STORAGE_PATH = "Company/Logo_HYEV.png";
@@ -29,35 +27,28 @@ export async function loadCompanyBrand(): Promise<CompanyBrand> {
   const logoUrl =
     process.env.NEXT_PUBLIC_COMPANY_LOGO_URL?.trim() || DEFAULT_COMPANY_BRAND.logoUrl;
 
-  if (isFirestorePrimary()) {
-    const fs = await loadCompanySettingsFull();
-    if (fs) {
-      return {
-        companyName: fs.companyName || DEFAULT_COMPANY_BRAND.companyName,
-        address: fs.address || DEFAULT_COMPANY_BRAND.address,
-        taxId: fs.taxId || DEFAULT_COMPANY_BRAND.taxId,
-        phone: fs.phone || DEFAULT_COMPANY_BRAND.phone,
-        email: fs.email || DEFAULT_COMPANY_BRAND.email,
-        logoUrl,
-        docPrefixInvoice: fs.docPrefixInvoice || "INV",
-        docPrefixTaxInvoice: fs.docPrefixTaxInvoice || "TAX",
-        docPrefixReceipt: fs.docPrefixReceipt || "RT",
-        docPrefixWht: fs.docPrefixWht || "WHT",
-      };
-    }
+  const fs = await loadCompanySettingsFull();
+  if (fs) {
+    return {
+      companyName: fs.companyName || DEFAULT_COMPANY_BRAND.companyName,
+      address: fs.address || DEFAULT_COMPANY_BRAND.address,
+      taxId: fs.taxId || DEFAULT_COMPANY_BRAND.taxId,
+      phone: fs.phone || DEFAULT_COMPANY_BRAND.phone,
+      email: fs.email || DEFAULT_COMPANY_BRAND.email,
+      logoUrl,
+      docPrefixInvoice: fs.docPrefixInvoice || "INV",
+      docPrefixTaxInvoice: fs.docPrefixTaxInvoice || "TAX",
+      docPrefixReceipt: fs.docPrefixReceipt || "RT",
+      docPrefixWht: fs.docPrefixWht || "WHT",
+    };
   }
 
-  const row = await prisma.companySettings.findUnique({ where: { id: 1 } });
   return {
-    companyName: row?.companyName || DEFAULT_COMPANY_BRAND.companyName,
-    address: row?.address || DEFAULT_COMPANY_BRAND.address,
-    taxId: row?.taxId || DEFAULT_COMPANY_BRAND.taxId,
-    phone: row?.phone || DEFAULT_COMPANY_BRAND.phone,
-    email: row?.email || DEFAULT_COMPANY_BRAND.email,
+    ...DEFAULT_COMPANY_BRAND,
     logoUrl,
-    docPrefixInvoice: row?.docPrefixInvoice || "INV",
-    docPrefixTaxInvoice: row?.docPrefixTaxInvoice || "TAX",
-    docPrefixReceipt: row?.docPrefixReceipt || "RT",
-    docPrefixWht: row?.docPrefixWht || "WHT",
+    docPrefixInvoice: "INV",
+    docPrefixTaxInvoice: "TAX",
+    docPrefixReceipt: "RT",
+    docPrefixWht: "WHT",
   };
 }

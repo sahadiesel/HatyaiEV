@@ -1,5 +1,3 @@
-import { prisma } from "@/lib/prisma";
-import { isFirestorePrimary } from "./data-primary";
 import { listHiringContractsFromFirestore } from "./hiring-contracts-repository";
 import { listSubcontractAgreementsFromFirestore } from "./subcontract-agreements-repository";
 
@@ -17,46 +15,18 @@ function nextCodeFromList(codes: string[], prefix: string): string {
   return `${prefix}${String(max + 1).padStart(3, "0")}`;
 }
 
-/**
- * เลขที่สัญญารับจ้าง: HC-{ปี}-{ลำดับ 3 หลัก} เช่น HC-2026-001
- */
+/** เลขที่สัญญารับจ้าง: HC-{ปี}-{ลำดับ 3 หลัก} */
 export async function nextHiringContractCode(now = new Date()): Promise<string> {
   const year = now.getFullYear();
   const prefix = `HC-${year}-`;
-
-  if (isFirestorePrimary()) {
-    const rows = await listHiringContractsFromFirestore();
-    return nextCodeFromList((rows ?? []).map((r) => r.code), prefix);
-  }
-
-  const rows = await prisma.hiringContract.findMany({
-    where: { code: { startsWith: prefix } },
-    select: { code: true },
-  });
-  return nextCodeFromList(
-    rows.map((r) => r.code),
-    prefix,
-  );
+  const rows = await listHiringContractsFromFirestore();
+  return nextCodeFromList((rows ?? []).map((r) => r.code), prefix);
 }
 
-/**
- * เลขที่สัญญาว่าจ้าง: SA-{ปี}-{ลำดับ 3 หลัก} เช่น SA-2026-001
- */
+/** เลขที่สัญญาว่าจ้าง: SA-{ปี}-{ลำดับ 3 หลัก} */
 export async function nextSubcontractAgreementCode(now = new Date()): Promise<string> {
   const year = now.getFullYear();
   const prefix = `SA-${year}-`;
-
-  if (isFirestorePrimary()) {
-    const rows = await listSubcontractAgreementsFromFirestore();
-    return nextCodeFromList((rows ?? []).map((r) => r.code), prefix);
-  }
-
-  const rows = await prisma.subcontractAgreement.findMany({
-    where: { code: { startsWith: prefix } },
-    select: { code: true },
-  });
-  return nextCodeFromList(
-    rows.map((r) => r.code),
-    prefix,
-  );
+  const rows = await listSubcontractAgreementsFromFirestore();
+  return nextCodeFromList((rows ?? []).map((r) => r.code), prefix);
 }

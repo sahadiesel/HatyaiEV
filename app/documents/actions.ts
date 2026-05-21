@@ -1,15 +1,19 @@
 "use server";
 
-import { Prisma, type DocumentKind } from "@prisma/client";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@/lib/prisma";
 import { calcCommercialTotals, calcWithholdingTotals, parseAmount, recalcLineAmount } from "@/lib/documents/calc";
+import type { DocumentKind } from "@/lib/documents-firestore-types";
+import {
+  assignDocumentNumber as assignDocumentNumberRepo,
+  createDocument,
+  getDocument,
+  updateDocument,
+} from "@/lib/documents-repository";
 import { nextDocumentNumber } from "@/lib/documents/next-number";
 import {
   defaultCommercialMeta,
   defaultWithholdingMeta,
   DOCUMENT_KIND_ROUTES,
-  parseLinesJson,
   parseMetaJson,
   type CommercialDocumentMeta,
   type DocumentLineItem,
@@ -61,10 +65,10 @@ export async function saveCommercialDocument(formData: FormData) {
   const data = {
     kind,
     issueDate,
-    subtotal: new Prisma.Decimal(subtotal),
-    vatAmount: new Prisma.Decimal(vatAmount),
-    totalAmount: new Prisma.Decimal(totalAmount),
-    withholdingAmount: new Prisma.Decimal(0),
+    subtotal: String(subtotal),
+    vatAmount: String(vatAmount),
+    totalAmount: String(totalAmount),
+    withholdingAmount: "0",
     notes,
     linesJson: JSON.stringify(lines),
     metaJson: JSON.stringify(meta),
@@ -72,17 +76,15 @@ export async function saveCommercialDocument(formData: FormData) {
     contractorId: null as string | null,
   };
 
-  if (id) {
-    await prisma.document.update({ where: { id }, data });
-    revalidateDoc(kind);
-    return { ok: true as const, id, number: null };
-  }
-
   try {
+    if (id) {
+      await updateDocument(id, data);
+      revalidateDoc(kind);
+      return { ok: true as const, id, number: null };
+    }
+
     const number = assignNumber ? await nextDocumentNumber(kind, issueDate) : "";
-    const created = await prisma.document.create({
-      data: { ...data, number },
-    });
+    const created = await createDocument({ ...data, number });
     revalidateDoc(kind);
     return { ok: true as const, id: created.id, number: created.number || null };
   } catch (e) {
@@ -119,10 +121,10 @@ export async function saveWithholdingDocument(formData: FormData) {
   const data = {
     kind,
     issueDate,
-    subtotal: new Prisma.Decimal(subtotal),
-    vatAmount: new Prisma.Decimal(vatAmount),
-    totalAmount: new Prisma.Decimal(totalAmount),
-    withholdingAmount: new Prisma.Decimal(withholdingAmount),
+    subtotal: String(subtotal),
+    vatAmount: String(vatAmount),
+    totalAmount: String(totalAmount),
+    withholdingAmount: String(withholdingAmount),
     notes,
     linesJson: "[]",
     metaJson: JSON.stringify(meta),
@@ -130,17 +132,15 @@ export async function saveWithholdingDocument(formData: FormData) {
     contractorId,
   };
 
-  if (id) {
-    await prisma.document.update({ where: { id }, data });
-    revalidateDoc(kind);
-    return { ok: true as const, id, number: null };
-  }
-
   try {
+    if (id) {
+      await updateDocument(id, data);
+      revalidateDoc(kind);
+      return { ok: true as const, id, number: null };
+    }
+
     const number = assignNumber ? await nextDocumentNumber(kind, issueDate) : "";
-    const created = await prisma.document.create({
-      data: { ...data, number },
-    });
+    const created = await createDocument({ ...data, number });
     revalidateDoc(kind);
     return { ok: true as const, id: created.id, number: created.number || null };
   } catch (e) {
@@ -150,11 +150,15 @@ export async function saveWithholdingDocument(formData: FormData) {
 }
 
 export async function assignDocumentNumber(documentId: string) {
-  const doc = await prisma.document.findUnique({ where: { id: documentId } });
+  const doc = await getDocument(documentId);
   if (!doc) return { ok: false as const, message: "ไม่พบเอกสาร" };
   if (doc.number) return { ok: true as const, number: doc.number };
-  const number = await nextDocumentNumber(doc.kind, doc.issueDate);
-  await prisma.document.update({ where: { id: documentId }, data: { number } });
-  revalidateDoc(doc.kind);
-  return { ok: true as const, number };
+  try {
+    const number = await nextDocumentNumber(doc.kind, doc.issueDate);
+    await assignDocumentNumberRepo(documentId, number);
+    revalidateDoc(doc.kind);
+    return { ok: true as const, number };
+  } catch (e) {
+    return { ok: false as const, message: e instanceof Error ? e.message : "ออกเลขไม่สำเร็จ" };
+  }
 }

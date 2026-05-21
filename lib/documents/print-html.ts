@@ -1,4 +1,4 @@
-import type { DocumentKind } from "@prisma/client";
+import type { DocumentKind } from "@/lib/documents-firestore-types";
 import { amountToThaiBahtText } from "./thai-baht-text";
 import type { CompanyBrand } from "./brand";
 import {

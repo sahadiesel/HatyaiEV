@@ -1,7 +1,7 @@
-import type { DocumentKind } from "@prisma/client";
+import type { DocumentKind } from "@/lib/documents-firestore-types";
 import Link from "next/link";
 import { DocumentPrintLink } from "@/components/documents/DocumentPrintLink";
-import { prisma } from "@/lib/prisma";
+import { listDocuments } from "@/lib/documents-repository";
 import { DOCUMENT_KIND_ROUTES } from "@/lib/documents/types";
 
 const kindLabel: Record<DocumentKind, string> = {
@@ -15,15 +15,7 @@ const kindLabel: Record<DocumentKind, string> = {
 
 export async function DocumentTable({ kind }: { kind: DocumentKind }) {
   const slug = DOCUMENT_KIND_ROUTES[kind].slug;
-  const rows = await prisma.document.findMany({
-    where: { kind },
-    orderBy: { issueDate: "desc" },
-    take: 200,
-    include: {
-      client: { select: { name: true } },
-      contractor: { select: { name: true } },
-    },
-  });
+  const rows = await listDocuments(kind);
 
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
@@ -69,13 +61,13 @@ export async function DocumentTable({ kind }: { kind: DocumentKind }) {
                   {Number(d.withholdingAmount).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
                 </td>
                 <td className="px-3 py-2 text-slate-700">
-                  {d.client?.name && <span>ลูกค้า: {d.client.name}</span>}
-                  {d.contractor?.name && (
+                  {d.clientName && <span>ลูกค้า: {d.clientName}</span>}
+                  {d.contractorName && (
                     <span>
-                      {d.client?.name ? " · " : ""}ผู้รับเหมา: {d.contractor.name}
+                      {d.clientName ? " · " : ""}ผู้รับเหมา: {d.contractorName}
                     </span>
                   )}
-                  {!d.client && !d.contractor && "—"}
+                  {!d.clientName && !d.contractorName && "—"}
                 </td>
                 <td className="px-3 py-2 text-right text-sm whitespace-nowrap">
                   <Link href={`/documents/${slug}/${d.id}`} className="text-blue-800 hover:underline">

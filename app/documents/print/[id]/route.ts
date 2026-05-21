@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { getDocument } from "@/lib/documents-repository";
 import { loadCompanyBrand } from "@/lib/documents/brand";
 import { fetchCompanyLogoDataUrl } from "@/lib/documents/company-logo";
 import {
@@ -21,7 +21,7 @@ export async function GET(
 ) {
   const { id } = await params;
   const issuedByFromQuery = new URL(req.url).searchParams.get("issuedBy")?.trim() ?? "";
-  const doc = await prisma.document.findUnique({ where: { id } });
+  const doc = await getDocument(id);
   if (!doc) {
     return new NextResponse("ไม่พบเอกสาร", { status: 404 });
   }

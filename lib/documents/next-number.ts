@@ -1,7 +1,6 @@
-import type { DocumentKind } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
+import type { DocumentKind } from "@/lib/documents-firestore-types";
+import { listDocumentNumbers } from "@/lib/documents-repository";
 import { loadCompanyBrand } from "./brand";
-import { DOCUMENT_KIND_ROUTES } from "./types";
 
 function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -10,7 +9,6 @@ function escapeRegex(s: string) {
 /** เลขที่เอกสาร เช่น INV66008 จาก prefix + ปี พ.ศ. 2 หลัก + ลำดับ */
 export async function nextDocumentNumber(kind: DocumentKind, now = new Date()): Promise<string> {
   const brand = await loadCompanyBrand();
-  const route = DOCUMENT_KIND_ROUTES[kind];
   const prefixMap: Record<DocumentKind, string> = {
     INVOICE: brand.docPrefixInvoice,
     TAX_INVOICE: brand.docPrefixTaxInvoice,
@@ -24,13 +22,10 @@ export async function nextDocumentNumber(kind: DocumentKind, now = new Date()): 
   const yy = String(beYear).padStart(2, "0");
   const head = `${prefix}${yy}`;
   const re = new RegExp(`^${escapeRegex(head)}(\\d+)$`, "i");
-  const rows = await prisma.document.findMany({
-    where: { kind, number: { startsWith: head } },
-    select: { number: true },
-  });
+  const rows = await listDocumentNumbers(kind, head);
   let max = 0;
-  for (const r of rows) {
-    const m = r.number.match(re);
+  for (const number of rows) {
+    const m = number.match(re);
     if (m) max = Math.max(max, parseInt(m[1], 10));
   }
   return `${head}${String(max + 1).padStart(3, "0")}`;

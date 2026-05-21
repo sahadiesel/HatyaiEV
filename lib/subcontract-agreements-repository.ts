@@ -3,14 +3,13 @@ import type {
   SubcontractAgreementFs,
   SubcontractInstallmentFs,
 } from "./contracts-firestore-types";
-import { canWriteFirestore, isFirestorePrimary } from "./data-primary";
+import { canWriteFirestore } from "./data-primary";
 import { getAdminFirestore } from "./firebase-admin";
 import { firestoreCollections } from "./firestore-collections";
 import { newEntityId } from "./new-id";
 import { nextSubcontractAgreementCode } from "./contractCodes";
 import { getContractor } from "./contractors-repository";
 import { getHiringContract, listHiringContracts } from "./hiring-contracts-repository";
-import { prisma } from "./prisma";
 
 function db() {
   return getAdminFirestore();
@@ -79,49 +78,13 @@ export async function listSubcontractAgreementCodesFromFirestore(): Promise<stri
   return rows.map((r) => r.code);
 }
 
-async function loadSubcontractFromPrisma(id: string): Promise<SubcontractAgreementFs | null> {
-  const a = await prisma.subcontractAgreement.findUnique({
-    where: { id },
-    include: {
-      installments: { orderBy: { sequence: "asc" } },
-      vehicles: true,
-    },
-  });
-  if (!a) return null;
-  return {
-    id: a.id,
-    code: a.code,
-    title: a.title,
-    contractorId: a.contractorId,
-    hiringContractId: a.hiringContractId,
-    vehicleCount: a.vehicleCount,
-    pricePerVehicleExVat: a.pricePerVehicleExVat.toString(),
-    vatRate: a.vatRate.toString(),
-    status: a.status as ContractDocStatus,
-    notes: a.notes,
-    selectedVehicleIds: a.vehicles.map((v) => v.hiringContractVehicleId),
-    installments: a.installments.map((m) => ({
-      sequence: m.sequence,
-      label: m.label,
-      amount: m.amount.toString(),
-      percent: m.percent != null ? m.percent.toString() : "",
-    })),
-  };
-}
-
 export async function countSubcontractAgreementsForContractor(contractorId: string): Promise<number> {
-  if (isFirestorePrimary()) {
-    const rows = await listSubcontractAgreementsFromFirestore();
-    return (rows ?? []).filter((r) => r.contractorId === contractorId).length;
-  }
-  return prisma.subcontractAgreement.count({ where: { contractorId } });
+  const rows = await listSubcontractAgreementsFromFirestore();
+  return (rows ?? []).filter((r) => r.contractorId === contractorId).length;
 }
 
 export async function getSubcontractAgreement(id: string): Promise<SubcontractAgreementFs | null> {
-  if (isFirestorePrimary()) {
-    return getSubcontractAgreementFirestore(id);
-  }
-  return loadSubcontractFromPrisma(id);
+  return getSubcontractAgreementFirestore(id);
 }
 
 export type SubcontractListItem = SubcontractAgreementFs & {
@@ -130,15 +93,7 @@ export type SubcontractListItem = SubcontractAgreementFs & {
 };
 
 export async function listSubcontractAgreements(): Promise<SubcontractListItem[]> {
-  const rows = isFirestorePrimary()
-    ? ((await listSubcontractAgreementsFromFirestore()) ?? [])
-    : (
-        await Promise.all(
-          (
-            await prisma.subcontractAgreement.findMany({ orderBy: { updatedAt: "desc" } })
-          ).map((r) => loadSubcontractFromPrisma(r.id)),
-        )
-      ).filter((x): x is SubcontractAgreementFs => x != null);
+  const rows = (await listSubcontractAgreementsFromFirestore()) ?? [];
 
   const hiringList = await listHiringContracts();
   const hiringById = new Map(hiringList.map((h) => [h.id, h]));

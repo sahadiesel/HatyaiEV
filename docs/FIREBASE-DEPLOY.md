@@ -121,7 +121,7 @@ git push origin main
 | `clients` | ผู้ว่าจ้าง — **บันทึกหลักเมื่อมี Firebase** |
 | `contractors` | ผู้รับเหมา — **บันทึกหลักเมื่อมี Firebase** |
 
-สัญญารับจ้าง/ว่าจ้าง ยังอยู่ SQLite ชั่วคราวบน server — จะย้าย Firestore ในรอบถัดไป
+สัญญาและเอกสารทั้งหมดอยู่ใน Firestore — ไม่ใช้ SQLite
 
 ย้ายข้อมูลจากเครื่อง dev ครั้งเดียว: `npm run db:migrate-firestore` (ต้องมี `serviceAccountKey.json`)
 
