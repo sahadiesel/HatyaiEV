@@ -1,10 +1,77 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // สำหรับพัฒนาเท่านั้น: แอปนี้ยังไม่ใช้ Firebase Auth จึงอนุญาตเขียนจาก Web SDK
-    // ก่อนขึ้น production ให้เปลี่ยนเป็นเงื่อนไข auth / บทบาทผู้ใช้
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function isApprovedUser() {
+      return signedIn() && userDoc().data.approved == true;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && userDoc().data.approved == true
+        && userDoc().data.role == 'admin';
+    }
+
+    function isFirstBootstrap() {
+      return !exists(/databases/$(database)/documents/meta/app);
+    }
+
+    match /meta/{docId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && docId == 'app'
+        && isFirstBootstrap();
+      allow update: if isAdmin();
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.nationalId is string
+        && request.resource.data.name is string
+        && request.resource.data.role is string
+        && request.resource.data.approved is bool
+        && (
+          (isFirstBootstrap()
+            && request.resource.data.role == 'admin'
+            && request.resource.data.approved == true)
+          || (!isFirstBootstrap()
+            && request.resource.data.role == 'user'
+            && request.resource.data.approved == false)
+        );
+      allow update: if isAdmin();
+    }
+
     match /companySettings/{docId} {
-      allow read, write: if true;
+      allow read: if isApprovedUser();
+      allow write: if isAdmin();
+    }
+
+    match /nationalIdIndex/{nid} {
+      allow read: if true;
+      allow create: if signedIn()
+        && request.auth.uid == request.resource.data.uid
+        && request.resource.data.keys().hasAll(['uid', 'authEmail', 'recoveryEmail']);
+      allow update, delete: if false;
+    }
+
+    match /appRoles/{roleId} {
+      allow read: if isApprovedUser();
+      allow create, update, delete: if isAdmin();
+    }
+
+    /** Admin เข้าถึงทุก collection ปัจจุบันและในอนาคต */
+    match /{document=**} {
+      allow read, write: if isAdmin();
     }
   }
 }

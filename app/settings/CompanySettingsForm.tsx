@@ -48,23 +48,25 @@ export function CompanySettingsForm({ initial }: { initial: CompanySettingsIniti
     };
 
     try {
-      const saved = await saveCompanySettings(formData);
-      if (!saved.ok) {
-        setError(saved.message);
-        return;
-      }
-
       if (isFirebaseConfigured()) {
         const fs = await writeCompanySettingsToFirestore(payload);
-        if (fs.ok) {
-          setMessage("บันทึกแล้ว — ฐานในเครื่อง + Firestore (companySettings/main)");
-        } else {
-          setMessage(
-            `บันทึกฐานในเครื่องแล้ว แต่ Firestore ไม่สำเร็จ: ${fs.message} (ตรวจ Rules / เน็ต / env)`,
-          );
+        if (!fs.ok) {
+          setError(fs.message);
+          return;
         }
+        try {
+          await saveCompanySettings(formData);
+        } catch {
+          /* SQLite บน App Hosting อาจไม่คงที่ — ไม่บล็อกถ้า Firestore สำเร็จ */
+        }
+        setMessage("บันทึกแล้ว — เก็บบน Firestore เรียบร้อย");
       } else {
-        setMessage("บันทึกลงฐานในเครื่องแล้ว — ยังไม่ได้ตั้งค่า Firebase ใน .env.local");
+        const saved = await saveCompanySettings(formData);
+        if (!saved.ok) {
+          setError(saved.message);
+          return;
+        }
+        setMessage("บันทึกลงฐานในเครื่องแล้ว — ตั้งค่า Firebase เพื่อบันทึกบนคลาวด์");
       }
       router.refresh();
     } catch (err) {

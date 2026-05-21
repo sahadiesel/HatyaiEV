@@ -1,6 +1,7 @@
 "use server";
 
-import { Prisma } from "@prisma/client";
+import { Prisma, type VehicleEngineType } from "@prisma/client";
+import { serializeContractPhotosForDb } from "@/lib/vehicle-inspection-items";
 import { prisma } from "@/lib/prisma";
 import { nextHiringContractCode } from "@/lib/contractCodes";
 import { revalidatePath } from "next/cache";
@@ -54,6 +55,7 @@ export async function updateHiringContract(formData: FormData) {
   const vehiclesJson = String(formData.get("vehiclesJson") ?? "[]");
   let vehicles: {
     lineIndex: number;
+    licensePlate: string;
     brand: string;
     model: string;
     year: string;
@@ -61,6 +63,7 @@ export async function updateHiringContract(formData: FormData) {
     engineType: string;
     engineSize: string;
     extraNotes: string;
+    contractPhotos: { id: string; fileName: string; storagePath?: string; dataUrl?: string }[];
   }[] = [];
   try {
     vehicles = JSON.parse(vehiclesJson);
@@ -80,6 +83,7 @@ export async function updateHiringContract(formData: FormData) {
 
   const totalExVat = pricePerVehicleExVat.mul(new Prisma.Decimal(vehicleCount));
 
+  try {
   await prisma.$transaction(async (tx) => {
     await tx.hiringContract.update({
       where: { id },
@@ -114,35 +118,50 @@ export async function updateHiringContract(formData: FormData) {
       where: { hiringContractId: id, lineIndex: { gt: vehicleCount } },
     });
 
+    const vehicleByLine = new Map<number, (typeof vehicles)[number]>();
     for (const v of vehicles) {
-      if (v.lineIndex < 1 || v.lineIndex > vehicleCount) continue;
-      const engineType =
-        v.engineType === "DIESEL" || v.engineType === "ELECTRIC" ? v.engineType : "GASOLINE";
+      const lineIndex = Number.parseInt(String(v.lineIndex), 10);
+      if (Number.isFinite(lineIndex) && lineIndex >= 1 && lineIndex <= vehicleCount) {
+        vehicleByLine.set(lineIndex, v);
+      }
+    }
+
+    for (let lineIndex = 1; lineIndex <= vehicleCount; lineIndex++) {
+      const v = vehicleByLine.get(lineIndex);
+      const engineType: VehicleEngineType =
+        v?.engineType === "DIESEL" || v?.engineType === "ELECTRIC" ? v.engineType : "GASOLINE";
+      const photosJson = serializeContractPhotosForDb(v?.contractPhotos);
+
+      const vehicleData = {
+        licensePlate: String(v?.licensePlate ?? ""),
+        brand: String(v?.brand ?? ""),
+        model: String(v?.model ?? ""),
+        year: String(v?.year ?? ""),
+        color: String(v?.color ?? ""),
+        engineType,
+        engineSize: String(v?.engineSize ?? ""),
+        extraNotes: String(v?.extraNotes ?? ""),
+        contractPhotos: photosJson,
+      };
+
       await tx.hiringContractVehicle.upsert({
-        where: { hiringContractId_lineIndex: { hiringContractId: id, lineIndex: v.lineIndex } },
+        where: { hiringContractId_lineIndex: { hiringContractId: id, lineIndex } },
         create: {
           hiringContractId: id,
-          lineIndex: v.lineIndex,
-          brand: v.brand ?? "",
-          model: v.model ?? "",
-          year: v.year ?? "",
-          color: v.color ?? "",
-          engineType,
-          engineSize: v.engineSize ?? "",
-          extraNotes: v.extraNotes ?? "",
+          lineIndex,
+          ...vehicleData,
         },
-        update: {
-          brand: v.brand ?? "",
-          model: v.model ?? "",
-          year: v.year ?? "",
-          color: v.color ?? "",
-          engineType,
-          engineSize: v.engineSize ?? "",
-          extraNotes: v.extraNotes ?? "",
-        },
+        update: vehicleData,
       });
     }
   });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("PrismaClientValidationError") || msg.includes("Invalid")) {
+      return { ok: false as const, message: "ข้อมูลรายการรถไม่ถูกต้อง — ลองบันทึกอีกครั้ง (รูปต้องอัปโหลดขึ้น Storage ก่อน)" };
+    }
+    throw e;
+  }
 
   revalidatePath(HC_PATH);
   revalidatePath(`${HC_PATH}/${id}`);

@@ -1,6 +1,6 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { parseContractPhotosJson } from "@/lib/vehicle-inspection-items";
 import { HiringContractEditor, type InstallmentRow, type VehicleRow } from "./HiringContractEditor";
 
 export default async function HiringContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -17,13 +17,15 @@ export default async function HiringContractDetailPage({ params }: { params: Pro
 
   const initialVehicles: VehicleRow[] = contract.vehicles.map((v) => ({
     lineIndex: v.lineIndex,
-    brand: v.brand,
-    model: v.model,
-    year: v.year,
-    color: v.color,
+    licensePlate: v.licensePlate ?? "",
+    brand: v.brand ?? "",
+    model: v.model ?? "",
+    year: v.year ?? "",
+    color: v.color ?? "",
     engineType: v.engineType,
-    engineSize: v.engineSize,
-    extraNotes: v.extraNotes,
+    engineSize: v.engineSize ?? "",
+    extraNotes: v.extraNotes ?? "",
+    contractPhotos: parseContractPhotosJson(v.contractPhotos),
   }));
 
   const initialInstallments: InstallmentRow[] = contract.installments.map((m) => ({
@@ -34,21 +36,10 @@ export default async function HiringContractDetailPage({ params }: { params: Pro
   }));
 
   return (
-    <div className="space-y-6">
-      <div>
-        <p className="text-sm text-slate-600">
-          <Link href="/contracts/hiring-contracts" className="text-blue-800 hover:underline">
-            ← สัญญารับจ้าง
-          </Link>
-        </p>
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">
-          แก้ไขสัญญารับจ้าง <span className="text-slate-600">{contract.code}</span>
-        </h1>
-      </div>
-
-      <HiringContractEditor
-        contractId={contract.id}
-        clients={clients}
+    <HiringContractEditor
+      contractId={contract.id}
+      contractCode={contract.code}
+      clients={clients}
         initialClientId={contract.clientId}
         initialTitle={contract.title}
         initialVehicleCount={contract.vehicleCount}
@@ -58,7 +49,6 @@ export default async function HiringContractDetailPage({ params }: { params: Pro
         initialStatus={contract.status}
         initialVehicles={initialVehicles}
         initialInstallments={initialInstallments}
-      />
-    </div>
+    />
   );
 }

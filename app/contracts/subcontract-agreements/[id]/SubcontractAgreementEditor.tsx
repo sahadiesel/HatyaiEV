@@ -1,7 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { ContractDocStatus } from "@prisma/client";
+import { ContractEditStickyBar } from "@/components/ContractEditStickyBar";
 import { updateSubcontractAgreement } from "../actions";
 import type { InstallmentRow } from "../../hiring-contracts/[id]/HiringContractEditor";
 
@@ -15,6 +17,8 @@ type VehicleOpt = {
   year: string;
   color: string;
 };
+
+const SUBCONTRACT_FORM_ID = "subcontract-agreement-form";
 
 export function SubcontractAgreementEditor({
   agreementId,
@@ -47,6 +51,7 @@ export function SubcontractAgreementEditor({
   initialSelectedVehicleIds: string[];
   initialInstallments: InstallmentRow[];
 }) {
+  const router = useRouter();
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -124,21 +129,27 @@ export function SubcontractAgreementEditor({
       setError(res.message);
       return;
     }
-    setMessage("บันทึกแล้ว");
+    setMessage("บันทึกการแก้ไขแล้ว");
+    router.refresh();
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-8">
-      <input type="hidden" name="id" value={agreementId} />
-
-      {message && (
-        <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900">{message}</p>
-      )}
-      {error && <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">{error}</p>}
-
-      <p className="text-sm text-slate-600">
-        เลขที่สัญญา: <strong>{code}</strong>
-      </p>
+    <>
+      <ContractEditStickyBar
+        backHref="/contracts/subcontract-agreements"
+        backLabel="สัญญาว่าจ้าง"
+        title={
+          <>
+            แก้ไขสัญญาว่าจ้าง <span className="font-semibold text-slate-600">{code}</span>
+          </>
+        }
+        formId={SUBCONTRACT_FORM_ID}
+        pending={pending}
+        message={message}
+        error={error}
+      />
+      <form id={SUBCONTRACT_FORM_ID} onSubmit={onSubmit} className="space-y-8">
+        <input type="hidden" name="id" value={agreementId} />
 
       <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
         <h2 className="font-semibold text-slate-900">คู่สัญญาและอ้างอิง</h2>
@@ -314,9 +325,10 @@ export function SubcontractAgreementEditor({
       </section>
 
       <button type="submit" disabled={pending} className={btnPrimary}>
-        {pending ? "กำลังบันทึก…" : "บันทึกสัญญาว่าจ้าง"}
+        {pending ? "กำลังบันทึก…" : "บันทึกการแก้ไข"}
       </button>
-    </form>
+      </form>
+    </>
   );
 }
 

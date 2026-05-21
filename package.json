@@ -12,7 +12,13 @@
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "deploy:prepare": "powershell -ExecutionPolicy Bypass -File scripts/deploy-prepare.ps1",
+    "deploy:rules": "cross-env NODE_OPTIONS=--use-system-ca firebase deploy --only firestore:rules --non-interactive",
+    "deploy:indexes": "cross-env NODE_OPTIONS=--use-system-ca firebase deploy --only firestore:indexes --non-interactive",
+    "deploy:firestore": "cross-env NODE_OPTIONS=--use-system-ca firebase deploy --only firestore --non-interactive",
+    "deploy:storage": "cross-env NODE_OPTIONS=--use-system-ca firebase deploy --only storage --non-interactive",
+    "deploy:all": "cross-env NODE_OPTIONS=--use-system-ca firebase deploy --only firestore,storage --non-interactive"
   },
   "dependencies": {
     "@prisma/client": "^6.8.2",
@@ -22,6 +28,8 @@
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "cross-env": "^7.0.3",
+    "firebase-tools": "^14.0.0",
     "@eslint/eslintrc": "^3",
     "@types/node": "^22",
     "@types/react": "^19",

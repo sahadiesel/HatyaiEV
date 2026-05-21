@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import type { InstallmentRow } from "../../hiring-contracts/[id]/HiringContractEditor";
@@ -54,17 +53,7 @@ export default async function SubcontractAgreementDetailPage({ params }: { param
   }));
 
   return (
-    <div className="space-y-6">
-      <div>
-        <p className="text-sm text-slate-600">
-          <Link href="/contracts/subcontract-agreements" className="text-blue-800 hover:underline">
-            ← สัญญาว่าจ้าง
-          </Link>
-        </p>
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">แก้ไขสัญญาว่าจ้าง</h1>
-      </div>
-
-      <SubcontractAgreementEditor
+    <SubcontractAgreementEditor
         agreementId={agreement.id}
         code={agreement.code}
         contractors={contractors}
@@ -79,7 +68,6 @@ export default async function SubcontractAgreementDetailPage({ params }: { param
         initialStatus={agreement.status}
         initialSelectedVehicleIds={initialSelectedVehicleIds}
         initialInstallments={initialInstallments}
-      />
-    </div>
+    />
   );
 }

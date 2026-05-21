@@ -108,6 +108,7 @@ model HiringContractVehicle {
   hiringContractId String
   hiringContract   HiringContract    @relation(fields: [hiringContractId], references: [id], onDelete: Cascade)
   lineIndex        Int
+  licensePlate     String            @default("")
   brand            String            @default("")
   model            String            @default("")
   year             String            @default("")
@@ -115,6 +116,12 @@ model HiringContractVehicle {
   engineType       VehicleEngineType @default(GASOLINE)
   engineSize       String            @default("")
   extraNotes       String            @default("")
+  /// JSON: ContractPhoto[] สูงสุด 4 รูป (base64 data URL)
+  contractPhotos   String            @default("[]")
+  /// JSON: VehicleInspectionRow[] 14 รายการตรวจรับ
+  inspectionJson   String            @default("[]")
+  /// JSON: VehicleBillingRecord[] บันทึกแจ้งหนี้/ใบกำกับ/ใบเสร็จ
+  billingJson      String            @default("[]")
 
   subcontractLinks SubcontractAgreementVehicle[]
 
@@ -209,6 +216,10 @@ model Document {
   totalAmount     Decimal        @default(0)
   withholdingAmount Decimal      @default(0)
   notes           String         @default("")
+  /// JSON DocumentLineItem[]
+  linesJson       String         @default("[]")
+  /// JSON ข้อมูลคู่สัญญา/ชำระเงิน/หัก ณ ที่จ่าย
+  metaJson        String         @default("{}")
 
   clientId      String?
   client        Client?      @relation("ClientDocuments", fields: [clientId], references: [id], onDelete: SetNull)
@@ -219,4 +230,5 @@ model Document {
   updatedAt DateTime @updatedAt
 
   @@index([kind])
+  @@index([number])
 }

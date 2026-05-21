@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { AuthGate } from "@/components/AuthGate";
+import { AuthProvider } from "@/components/AuthProvider";
+import { AppShell } from "@/components/AppShell";
+import { MenuAccessProvider } from "@/components/MenuAccessProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -7,47 +10,20 @@ export const metadata: Metadata = {
   description: "ระบบรับงานซ่อม ผู้ว่าจ้าง ผู้รับเหมา งวดเงิน และเอกสาร",
 };
 
-/** ทุกหน้าอ่านจาก Prisma — ไม่ prerender ตอน build (จำเป็นต่อ Firebase App Hosting) */
+/** ทุกหน้าอ่านจากฐานข้อมูล — ไม่ prerender ตอน build */
 export const dynamic = "force-dynamic";
 
-const nav = [
-  { href: "/", label: "หน้าแรก" },
-  { href: "/settings", label: "ตั้งค่าร้าน" },
-  { href: "/clients", label: "ผู้ว่าจ้าง" },
-  { href: "/contractors", label: "ผู้รับเหมา" },
-  { href: "/contracts", label: "เอกสารสัญญา" },
-];
-
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="th">
       <body className="min-h-screen antialiased">
-        <header className="sticky top-0 z-50 border-b border-slate-200 bg-white shadow-sm">
-          <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-            <Link href="/" className="text-lg font-semibold text-slate-900">
-              HYEV
-            </Link>
-            <nav className="flex flex-wrap items-center gap-2 text-sm">
-              {nav.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className="rounded-md px-2 py-1 text-slate-700 hover:bg-slate-100"
-                >
-                  {item.label}
-                </Link>
-              ))}
-              <Link href="/documents" className="rounded-md px-2 py-1 text-slate-700 hover:bg-slate-100">
-                การจัดการเอกสาร
-              </Link>
-            </nav>
-          </div>
-        </header>
-        <main className="mx-auto max-w-5xl px-4 py-8">{children}</main>
+        <AuthProvider>
+          <AuthGate>
+            <MenuAccessProvider>
+              <AppShell>{children}</AppShell>
+            </MenuAccessProvider>
+          </AuthGate>
+        </AuthProvider>
       </body>
     </html>
   );

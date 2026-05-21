@@ -1,12 +1,19 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { ContractDocStatus, VehicleEngineType } from "@prisma/client";
+import { ContractEditStickyBar } from "@/components/ContractEditStickyBar";
+import { VehiclePhotoUpload } from "@/components/VehiclePhotoUpload";
+import type { ContractPhoto } from "@/lib/vehicle-inspection-items";
+import { stripVehiclesForSave } from "@/lib/vehicle-inspection-items";
 import { updateHiringContract } from "../actions";
 
 export type InstallmentRow = { sequence: number; label: string; amount: string; percent: string };
 export type VehicleRow = {
   lineIndex: number;
+  licensePlate: string;
   brand: string;
   model: string;
   year: string;
@@ -14,12 +21,16 @@ export type VehicleRow = {
   engineType: VehicleEngineType;
   engineSize: string;
   extraNotes: string;
+  contractPhotos: ContractPhoto[];
 };
 
 type ClientOpt = { id: string; name: string };
 
+const HIRING_CONTRACT_FORM_ID = "hiring-contract-form";
+
 export function HiringContractEditor({
   contractId,
+  contractCode,
   clients,
   initialClientId,
   initialTitle,
@@ -32,6 +43,7 @@ export function HiringContractEditor({
   initialInstallments,
 }: {
   contractId: string;
+  contractCode: string;
   clients: ClientOpt[];
   initialClientId: string;
   initialTitle: string;
@@ -43,6 +55,7 @@ export function HiringContractEditor({
   initialVehicles: VehicleRow[];
   initialInstallments: InstallmentRow[];
 }) {
+  const router = useRouter();
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -57,6 +70,13 @@ export function HiringContractEditor({
 
   const [vehicles, setVehicles] = useState<VehicleRow[]>(() => mergeVehicleRows(initialVehicleCount, initialVehicles));
   const [installments, setInstallments] = useState<InstallmentRow[]>(() => initialInstallments);
+  const [vehicleSearch, setVehicleSearch] = useState("");
+
+  const filteredVehicles = useMemo(() => {
+    const q = vehicleSearch.trim().toLowerCase();
+    if (!q) return vehicles;
+    return vehicles.filter((v) => vehicleMatchesSearch(v, q));
+  }, [vehicles, vehicleSearch]);
 
   const totalExVat = useMemo(() => {
     const p = parseFloat(pricePerVehicleExVat.replace(/,/g, "")) || 0;
@@ -75,7 +95,9 @@ export function HiringContractEditor({
   }
 
   function updateVehicle(i: number, patch: Partial<VehicleRow>) {
-    setVehicles((rows) => rows.map((r) => (r.lineIndex === i ? { ...r, ...patch } : r)));
+    setVehicles((rows) =>
+      rows.map((r) => (r.lineIndex === i ? normalizeVehicleRow({ ...r, ...patch, lineIndex: i }) : r)),
+    );
   }
 
   function updateInst(idx: number, patch: Partial<InstallmentRow>) {
@@ -112,7 +134,7 @@ export function HiringContractEditor({
     setMessage(null);
     const form = e.currentTarget;
     const fd = new FormData(form);
-    fd.set("vehiclesJson", JSON.stringify(vehicles));
+    fd.set("vehiclesJson", JSON.stringify(stripVehiclesForSave(vehicles)));
     fd.set("installmentsJson", JSON.stringify(installments));
     const res = await updateHiringContract(fd);
     setPending(false);
@@ -120,17 +142,41 @@ export function HiringContractEditor({
       setError(res.message);
       return;
     }
-    setMessage("บันทึกแล้ว");
+    setMessage("บันทึกการแก้ไขแล้ว");
+    router.refresh();
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-8">
-      <input type="hidden" name="id" value={contractId} />
-
-      {message && (
-        <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900">{message}</p>
-      )}
-      {error && <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">{error}</p>}
+    <>
+      <ContractEditStickyBar
+        backHref="/contracts/hiring-contracts"
+        backLabel="สัญญารับจ้าง"
+        title={
+          <>
+            แก้ไขสัญญารับจ้าง <span className="font-semibold text-slate-600">{contractCode}</span>
+          </>
+        }
+        formId={HIRING_CONTRACT_FORM_ID}
+        pending={pending}
+        message={message}
+        error={error}
+        toolbar={
+          vehicleCount > 0 ? (
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <span className="sr-only">ค้นหารายการรถ</span>
+              <input
+                type="search"
+                value={vehicleSearch}
+                onChange={(e) => setVehicleSearch(e.target.value)}
+                placeholder="ค้นหา ทะเบียน / ยี่ห้อ / รุ่น"
+                className="w-52 min-w-[12rem] rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:w-64"
+              />
+            </label>
+          ) : null
+        }
+      />
+      <form id={HIRING_CONTRACT_FORM_ID} onSubmit={onSubmit} className="space-y-8">
+        <input type="hidden" name="id" value={contractId} />
 
       <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
         <h2 className="font-semibold text-slate-900">ข้อมูลสัญญา</h2>
@@ -279,19 +325,51 @@ export function HiringContractEditor({
       </section>
 
       <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="font-semibold text-slate-900">รายการรถ ({vehicleCount} คัน)</h2>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <h2 className="font-semibold text-slate-900">รายการรถ ({vehicleCount} คัน)</h2>
+          {vehicleCount > 0 && vehicleSearch.trim() && (
+            <p className="text-sm text-slate-600">
+              แสดง {filteredVehicles.length} จาก {vehicleCount} คัน
+            </p>
+          )}
+        </div>
         {vehicleCount === 0 ? (
           <p className="text-sm text-slate-500">ตั้งจำนวนคันมากกว่า 0 เพื่อแสดงแบบฟอร์มรายคัน</p>
+        ) : filteredVehicles.length === 0 ? (
+          <p className="text-sm text-slate-500">ไม่พบรถที่ตรงกับคำค้นหา &quot;{vehicleSearch.trim()}&quot;</p>
         ) : (
           <div className="space-y-6">
-            {vehicles.map((v) => (
+            {filteredVehicles.map((v) => (
               <div key={v.lineIndex} className="rounded-md border border-slate-100 bg-slate-50/80 p-3">
-                <p className="mb-2 text-sm font-medium text-slate-800">คันที่ {v.lineIndex}</p>
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  <Field label="ยี่ห้อ" value={v.brand} onChange={(b) => updateVehicle(v.lineIndex, { brand: b })} />
-                  <Field label="รุ่น" value={v.model} onChange={(b) => updateVehicle(v.lineIndex, { model: b })} />
-                  <Field label="ปี" value={v.year} onChange={(b) => updateVehicle(v.lineIndex, { year: b })} />
-                  <Field label="สี" value={v.color} onChange={(b) => updateVehicle(v.lineIndex, { color: b })} />
+                <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                  <p className="text-sm font-medium text-slate-800">คันที่ {v.lineIndex}</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Link
+                      href={`/contracts/hiring-contracts/${contractId}/vehicles/${v.lineIndex}/progress`}
+                      className={btnBlue}
+                    >
+                      รายละเอียดความคืบหน้างาน
+                    </Link>
+                    <Link
+                      href={`/contracts/hiring-contracts/${contractId}/vehicles/${v.lineIndex}/billing`}
+                      className={btnBlue}
+                    >
+                      รายละเอียดการวางบิลเก็บเงิน
+                    </Link>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+                  <Field
+                    label="ทะเบียนรถ"
+                    value={v.licensePlate}
+                    onChange={(val) => updateVehicle(v.lineIndex, { licensePlate: val })}
+                  />
+                  <Field label="ยี่ห้อ" value={v.brand} onChange={(val) => updateVehicle(v.lineIndex, { brand: val })} />
+                  <Field label="รุ่น" value={v.model} onChange={(val) => updateVehicle(v.lineIndex, { model: val })} />
+                  <Field label="ปี" value={v.year} onChange={(val) => updateVehicle(v.lineIndex, { year: val })} />
+                </div>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  <Field label="สี" value={v.color} onChange={(val) => updateVehicle(v.lineIndex, { color: val })} />
                   <label className="block text-xs">
                     <span className="text-slate-600">ชนิดเครื่องยนต์</span>
                     <select
@@ -307,18 +385,29 @@ export function HiringContractEditor({
                   <Field
                     label="ขนาดเครื่องยนต์"
                     value={v.engineSize}
-                    onChange={(b) => updateVehicle(v.lineIndex, { engineSize: b })}
+                    onChange={(val) => updateVehicle(v.lineIndex, { engineSize: val })}
                   />
-                  <label className="block text-xs sm:col-span-2 lg:col-span-3">
-                    <span className="text-slate-600">รายละเอียดเพิ่มเติม</span>
+                </div>
+                <div className="mt-3 space-y-3 rounded-md border border-amber-200/80 bg-amber-50/40 p-3">
+                  <label className="block text-xs">
+                    <span className="font-medium text-slate-700">รายละเอียดเพิ่มเติม</span>
                     <textarea
                       rows={2}
-                      value={v.extraNotes}
+                      value={v.extraNotes ?? ""}
                       onChange={(e) => updateVehicle(v.lineIndex, { extraNotes: e.target.value })}
                       className={inp}
                     />
                   </label>
+                  <VehiclePhotoUpload
+                    contractId={contractId}
+                    lineIndex={v.lineIndex}
+                    photos={v.contractPhotos}
+                    onChange={(contractPhotos) => updateVehicle(v.lineIndex, { contractPhotos })}
+                  />
                 </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  บันทึกสัญญาก่อนเปิดความคืบหน้า/วางบิล — ปุ่มน้ำเงินจะโหลดข้อมูลหลังบันทึกครั้งแรก
+                </p>
               </div>
             ))}
           </div>
@@ -326,9 +415,10 @@ export function HiringContractEditor({
       </section>
 
       <button type="submit" disabled={pending} className={btnPrimary}>
-        {pending ? "กำลังบันทึก…" : "บันทึกสัญญารับจ้าง"}
+        {pending ? "กำลังบันทึก…" : "บันทึกการแก้ไข"}
       </button>
-    </form>
+      </form>
+    </>
   );
 }
 
@@ -338,34 +428,46 @@ function Field({
   onChange,
 }: {
   label: string;
-  value: string;
+  value: string | undefined;
   onChange: (v: string) => void;
 }) {
   return (
     <label className="block text-xs">
       <span className="text-slate-600">{label}</span>
-      <input value={value} onChange={(e) => onChange(e.target.value)} className={inp} />
+      <input value={value ?? ""} onChange={(e) => onChange(e.target.value)} className={inp} />
     </label>
   );
 }
 
+function normalizeVehicleRow(raw: Partial<VehicleRow> & { lineIndex: number }): VehicleRow {
+  const engineType =
+    raw.engineType === "DIESEL" || raw.engineType === "ELECTRIC" ? raw.engineType : "GASOLINE";
+  return {
+    lineIndex: raw.lineIndex,
+    licensePlate: String(raw.licensePlate ?? ""),
+    brand: String(raw.brand ?? ""),
+    model: String(raw.model ?? ""),
+    year: String(raw.year ?? ""),
+    color: String(raw.color ?? ""),
+    engineType,
+    engineSize: String(raw.engineSize ?? ""),
+    extraNotes: String(raw.extraNotes ?? ""),
+    contractPhotos: Array.isArray(raw.contractPhotos) ? raw.contractPhotos : [],
+  };
+}
+
+function vehicleMatchesSearch(v: VehicleRow, queryLower: string): boolean {
+  const plate = (v.licensePlate ?? "").toLowerCase();
+  const brand = (v.brand ?? "").toLowerCase();
+  const model = (v.model ?? "").toLowerCase();
+  return plate.includes(queryLower) || brand.includes(queryLower) || model.includes(queryLower);
+}
+
 function mergeVehicleRows(count: number, existing: VehicleRow[]): VehicleRow[] {
-  const byLine = new Map(existing.map((v) => [v.lineIndex, v]));
+  const byLine = new Map(existing.map((v) => [v.lineIndex, normalizeVehicleRow(v)]));
   const rows: VehicleRow[] = [];
   for (let i = 1; i <= count; i++) {
-    const prev = byLine.get(i);
-    rows.push(
-      prev ?? {
-        lineIndex: i,
-        brand: "",
-        model: "",
-        year: "",
-        color: "",
-        engineType: "GASOLINE",
-        engineSize: "",
-        extraNotes: "",
-      },
-    );
+    rows.push(normalizeVehicleRow(byLine.get(i) ?? { lineIndex: i }));
   }
   return rows;
 }
@@ -378,3 +480,5 @@ const btnPrimary =
   "rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60";
 const btnSecondary =
   "rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800 hover:bg-slate-50";
+const btnBlue =
+  "inline-flex rounded-md bg-blue-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-800";

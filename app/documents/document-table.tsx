@@ -1,5 +1,8 @@
 import type { DocumentKind } from "@prisma/client";
+import Link from "next/link";
+import { DocumentPrintLink } from "@/components/documents/DocumentPrintLink";
 import { prisma } from "@/lib/prisma";
+import { DOCUMENT_KIND_ROUTES } from "@/lib/documents/types";
 
 const kindLabel: Record<DocumentKind, string> = {
   INVOICE: "ใบแจ้งหนี้",
@@ -11,6 +14,7 @@ const kindLabel: Record<DocumentKind, string> = {
 };
 
 export async function DocumentTable({ kind }: { kind: DocumentKind }) {
+  const slug = DOCUMENT_KIND_ROUTES[kind].slug;
   const rows = await prisma.document.findMany({
     where: { kind },
     orderBy: { issueDate: "desc" },
@@ -33,24 +37,37 @@ export async function DocumentTable({ kind }: { kind: DocumentKind }) {
             <th className="px-3 py-2 font-medium">รวม</th>
             <th className="px-3 py-2 font-medium">หัก ณ ที่จ่าย</th>
             <th className="px-3 py-2 font-medium">คู่สัญญา</th>
+            <th className="px-3 py-2 font-medium w-28" />
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={7} className="px-3 py-8 text-center text-slate-500">
-                ยังไม่มี{kindLabel[kind]}ในระบบ — ฟังก์ชันสร้าง/พิมพ์เอกสารจะเพิ่มในขั้นถัดไป
+              <td colSpan={8} className="px-3 py-8 text-center text-slate-500">
+                ยังไม่มี{kindLabel[kind]}ในระบบ — กด <strong>สร้างเอกสาร</strong> เพื่อเพิ่มรายการ
               </td>
             </tr>
           ) : (
             rows.map((d) => (
               <tr key={d.id} className="hover:bg-slate-50/80">
-                <td className="px-3 py-2 font-mono text-slate-900">{d.number || "—"}</td>
+                <td className="px-3 py-2 font-mono text-slate-900">
+                  <Link href={`/documents/${slug}/${d.id}`} className="text-blue-800 hover:underline">
+                    {d.number || "—"}
+                  </Link>
+                </td>
                 <td className="px-3 py-2 text-slate-700">{d.issueDate.toLocaleDateString("th-TH")}</td>
-                <td className="px-3 py-2 text-slate-800">{String(d.subtotal)}</td>
-                <td className="px-3 py-2 text-slate-800">{String(d.vatAmount)}</td>
-                <td className="px-3 py-2 font-medium text-slate-900">{String(d.totalAmount)}</td>
-                <td className="px-3 py-2 text-slate-800">{String(d.withholdingAmount)}</td>
+                <td className="px-3 py-2 text-right text-slate-800">
+                  {Number(d.subtotal).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+                </td>
+                <td className="px-3 py-2 text-right text-slate-800">
+                  {Number(d.vatAmount).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+                </td>
+                <td className="px-3 py-2 text-right font-medium text-slate-900">
+                  {Number(d.totalAmount).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+                </td>
+                <td className="px-3 py-2 text-right text-slate-800">
+                  {Number(d.withholdingAmount).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+                </td>
                 <td className="px-3 py-2 text-slate-700">
                   {d.client?.name && <span>ลูกค้า: {d.client.name}</span>}
                   {d.contractor?.name && (
@@ -59,6 +76,13 @@ export async function DocumentTable({ kind }: { kind: DocumentKind }) {
                     </span>
                   )}
                   {!d.client && !d.contractor && "—"}
+                </td>
+                <td className="px-3 py-2 text-right text-sm whitespace-nowrap">
+                  <Link href={`/documents/${slug}/${d.id}`} className="text-blue-800 hover:underline">
+                    แก้ไข
+                  </Link>
+                  {" · "}
+                  <DocumentPrintLink documentId={d.id} />
                 </td>
               </tr>
             ))
