@@ -23,44 +23,36 @@ function nextCodeFromList(codes: string[], prefix: string): string {
 export async function nextClientCode(now = new Date()): Promise<string> {
   const year = now.getFullYear();
   const prefix = `CL-${year}-`;
-  const codes: string[] = [];
 
   if (isFirestorePrimary()) {
-    codes.push(...(await listClientCodesFromFirestore()));
+    return nextCodeFromList(await listClientCodesFromFirestore(), prefix);
   }
-  try {
-    const rows = await prisma.client.findMany({
-      where: { code: { startsWith: prefix } },
-      select: { code: true },
-    });
-    for (const r of rows) {
-      if (r.code) codes.push(r.code);
-    }
-  } catch {
-    /* production อาจไม่มี sqlite */
-  }
-  return nextCodeFromList(codes, prefix);
+
+  const rows = await prisma.client.findMany({
+    where: { code: { startsWith: prefix } },
+    select: { code: true },
+  });
+  return nextCodeFromList(
+    rows.map((r) => r.code).filter((c): c is string => Boolean(c)),
+    prefix,
+  );
 }
 
 /** ผู้รับเหมา: CR-{ปี}-{ลำดับ} */
 export async function nextContractorCode(now = new Date()): Promise<string> {
   const year = now.getFullYear();
   const prefix = `CR-${year}-`;
-  const codes: string[] = [];
 
   if (isFirestorePrimary()) {
-    codes.push(...(await listContractorCodesFromFirestore()));
+    return nextCodeFromList(await listContractorCodesFromFirestore(), prefix);
   }
-  try {
-    const rows = await prisma.contractor.findMany({
-      where: { code: { startsWith: prefix } },
-      select: { code: true },
-    });
-    for (const r of rows) {
-      if (r.code) codes.push(r.code);
-    }
-  } catch {
-    /* ignore */
-  }
-  return nextCodeFromList(codes, prefix);
+
+  const rows = await prisma.contractor.findMany({
+    where: { code: { startsWith: prefix } },
+    select: { code: true },
+  });
+  return nextCodeFromList(
+    rows.map((r) => r.code).filter((c): c is string => Boolean(c)),
+    prefix,
+  );
 }

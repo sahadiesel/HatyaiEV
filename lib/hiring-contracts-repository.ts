@@ -102,13 +102,11 @@ export async function listHiringContractCodesFromFirestore(): Promise<string[]> 
 }
 
 export async function countHiringContractsForClient(clientId: string): Promise<number> {
-  const rows = await listHiringContractsFromFirestore();
-  if (rows) return rows.filter((r) => r.clientId === clientId).length;
-  try {
-    return await prisma.hiringContract.count({ where: { clientId } });
-  } catch {
-    return 0;
+  if (isFirestorePrimary()) {
+    const rows = await listHiringContractsFromFirestore();
+    return (rows ?? []).filter((r) => r.clientId === clientId).length;
   }
+  return prisma.hiringContract.count({ where: { clientId } });
 }
 
 async function loadHiringFromPrisma(id: string): Promise<HiringContractFs | null> {
@@ -153,8 +151,7 @@ async function loadHiringFromPrisma(id: string): Promise<HiringContractFs | null
 
 export async function getHiringContract(id: string): Promise<HiringContractFs | null> {
   if (isFirestorePrimary()) {
-    const fs = await getHiringContractFirestore(id);
-    if (fs) return fs;
+    return getHiringContractFirestore(id);
   }
   return loadHiringFromPrisma(id);
 }
@@ -162,19 +159,18 @@ export async function getHiringContract(id: string): Promise<HiringContractFs | 
 export type HiringContractListItem = HiringContractFs & { clientName: string };
 
 export async function listHiringContracts(): Promise<HiringContractListItem[]> {
-  let rows: HiringContractFs[] | null = null;
-  if (isFirestorePrimary()) {
-    rows = await listHiringContractsFromFirestore();
-  }
-  if (rows === null) {
-    const prismaRows = await prisma.hiringContract.findMany({
-      orderBy: { updatedAt: "desc" },
-      include: { vehicles: true, installments: true },
-    });
-    rows = await Promise.all(
-      prismaRows.map(async (c) => (await loadHiringFromPrisma(c.id))!),
-    );
-  }
+  const rows = isFirestorePrimary()
+    ? ((await listHiringContractsFromFirestore()) ?? [])
+    : (
+        await Promise.all(
+          (
+            await prisma.hiringContract.findMany({
+              orderBy: { updatedAt: "desc" },
+              include: { vehicles: true, installments: true },
+            })
+          ).map(async (c) => (await loadHiringFromPrisma(c.id))!),
+        )
+      ).filter(Boolean);
   const out: HiringContractListItem[] = [];
   for (const r of rows) {
     const client = await getClient(r.clientId);

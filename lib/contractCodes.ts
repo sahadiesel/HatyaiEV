@@ -26,12 +26,7 @@ export async function nextHiringContractCode(now = new Date()): Promise<string> 
 
   if (isFirestorePrimary()) {
     const rows = await listHiringContractsFromFirestore();
-    if (rows !== null) {
-      return nextCodeFromList(
-        rows.map((r) => r.code),
-        prefix,
-      );
-    }
+    return nextCodeFromList((rows ?? []).map((r) => r.code), prefix);
   }
 
   const rows = await prisma.hiringContract.findMany({
@@ -53,12 +48,7 @@ export async function nextSubcontractAgreementCode(now = new Date()): Promise<st
 
   if (isFirestorePrimary()) {
     const rows = await listSubcontractAgreementsFromFirestore();
-    if (rows !== null) {
-      return nextCodeFromList(
-        rows.map((r) => r.code),
-        prefix,
-      );
-    }
+    return nextCodeFromList((rows ?? []).map((r) => r.code), prefix);
   }
 
   const rows = await prisma.subcontractAgreement.findMany({

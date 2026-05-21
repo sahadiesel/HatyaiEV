@@ -18,7 +18,8 @@ export type ClientFormValues = {
 const inp =
   "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
 
-export function ClientEditForm({ client }: { client: ClientFormValues }) {  const router = useRouter();
+export function ClientEditForm({ client }: { client: ClientFormValues }) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
 
