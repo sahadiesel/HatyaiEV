@@ -1,6 +1,7 @@
 "use server";
 
 import { Prisma } from "@prisma/client";
+import { upsertClientFirestore, deleteClientFirestore } from "@/lib/firestore-entities";
 import { prisma } from "@/lib/prisma";
 import { nextClientCode } from "@/lib/partyCodes";
 import { revalidatePath } from "next/cache";
@@ -12,7 +13,7 @@ export async function createClient(formData: FormData) {
   for (let attempt = 0; attempt < 12; attempt++) {
     const code = await nextClientCode();
     try {
-      await prisma.client.create({
+      const created = await prisma.client.create({
         data: {
           code,
           name,
@@ -23,7 +24,22 @@ export async function createClient(formData: FormData) {
           notes: String(formData.get("notes") ?? ""),
         },
       });
+      try {
+        await upsertClientFirestore({
+          id: created.id,
+          code: created.code,
+          name: created.name,
+          taxId: created.taxId,
+          address: created.address,
+          phone: created.phone,
+          email: created.email,
+          notes: created.notes,
+        });
+      } catch {
+        /* Firestore mirror — ไม่บล็อกถ้า SQLite สำเร็จ */
+      }
       revalidatePath("/clients");
+      revalidatePath("/");
       return { ok: true as const };
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") continue;
@@ -39,7 +55,7 @@ export async function updateClient(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
   if (!name) return { ok: false as const, message: "กรอกชื่อ / บริษัท" };
 
-  await prisma.client.update({
+  const updated = await prisma.client.update({
     where: { id },
     data: {
       name,
@@ -50,7 +66,22 @@ export async function updateClient(formData: FormData) {
       notes: String(formData.get("notes") ?? ""),
     },
   });
+  try {
+    await upsertClientFirestore({
+      id: updated.id,
+      code: updated.code,
+      name: updated.name,
+      taxId: updated.taxId,
+      address: updated.address,
+      phone: updated.phone,
+      email: updated.email,
+      notes: updated.notes,
+    });
+  } catch {
+    /* ignore */
+  }
   revalidatePath("/clients");
+  revalidatePath("/");
   revalidatePath(`/clients/${id}/edit`);
   return { ok: true as const };
 }
@@ -68,6 +99,12 @@ export async function deleteClient(id: string) {
     };
   }
   await prisma.client.delete({ where: { id } });
+  try {
+    await deleteClientFirestore(id);
+  } catch {
+    /* ignore */
+  }
   revalidatePath("/clients");
+  revalidatePath("/");
   return { ok: true as const };
 }

@@ -19,25 +19,27 @@
     "deploy:firestore": "cross-env NODE_OPTIONS=--use-system-ca firebase deploy --only firestore --non-interactive",
     "deploy:storage": "cross-env NODE_OPTIONS=--use-system-ca firebase deploy --only storage --non-interactive",
     "deploy:all": "cross-env NODE_OPTIONS=--use-system-ca firebase deploy --only firestore,storage --non-interactive",
-    "apphosting:sync-env": "powershell -ExecutionPolicy Bypass -File scripts/sync-apphosting-env.ps1"
+    "apphosting:sync-env": "powershell -ExecutionPolicy Bypass -File scripts/sync-apphosting-env.ps1",
+    "db:migrate-firestore": "node scripts/migrate-sqlite-to-firestore.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.8.2",
     "firebase": "^11.6.0",
+    "firebase-admin": "^13.10.0",
     "next": "^15.3.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
-    "cross-env": "^7.0.3",
-    "firebase-tools": "^14.0.0",
     "@eslint/eslintrc": "^3",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "autoprefixer": "^10.4.21",
+    "cross-env": "^7.0.3",
     "eslint": "^9",
     "eslint-config-next": "^15.3.2",
+    "firebase-tools": "^14.0.0",
     "postcss": "^8.5.3",
     "prisma": "^6.8.2",
     "tailwindcss": "^3.4.17",

@@ -1,10 +1,13 @@
+import { listContractorsFromFirestore } from "@/lib/firestore-entities";
 import { prisma } from "@/lib/prisma";
 import { ContractorPageShell, type ContractorRow } from "./ContractorPageShell";
 
 export default async function ContractorsPage() {
-  const rows = await prisma.contractor.findMany({
-    orderBy: { createdAt: "desc" },
-  });
+  const fsRows = await listContractorsFromFirestore();
+  const rows =
+    fsRows !== null
+      ? fsRows
+      : await prisma.contractor.findMany({ orderBy: { createdAt: "desc" } });
 
   const initialRows: ContractorRow[] = rows.map((r) => ({
     id: r.id,

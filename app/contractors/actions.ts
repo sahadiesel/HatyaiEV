@@ -1,6 +1,7 @@
 "use server";
 
 import { Prisma } from "@prisma/client";
+import { upsertContractorFirestore, deleteContractorFirestore } from "@/lib/firestore-entities";
 import { prisma } from "@/lib/prisma";
 import { nextContractorCode } from "@/lib/partyCodes";
 import { revalidatePath } from "next/cache";
@@ -13,7 +14,7 @@ export async function createContractor(formData: FormData) {
   for (let attempt = 0; attempt < 12; attempt++) {
     const code = await nextContractorCode();
     try {
-      await prisma.contractor.create({
+      const created = await prisma.contractor.create({
         data: {
           code,
           name,
@@ -27,7 +28,25 @@ export async function createContractor(formData: FormData) {
           notes: String(formData.get("notes") ?? ""),
         },
       });
+      try {
+        await upsertContractorFirestore({
+          id: created.id,
+          code: created.code,
+          name: created.name,
+          taxId: created.taxId,
+          address: created.address,
+          phone: created.phone,
+          email: created.email,
+          bankName: created.bankName,
+          bankAccount: created.bankAccount,
+          defaultWhtPercent: String(created.defaultWhtPercent),
+          notes: created.notes,
+        });
+      } catch {
+        /* ignore */
+      }
       revalidatePath("/contractors");
+      revalidatePath("/");
       return { ok: true as const };
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") continue;
@@ -44,7 +63,7 @@ export async function updateContractor(formData: FormData) {
   if (!name) return { ok: false as const, message: "กรอกชื่อ / บริษัท" };
   const wht = String(formData.get("defaultWhtPercent") ?? "1").replace(",", ".");
 
-  await prisma.contractor.update({
+  const updated = await prisma.contractor.update({
     where: { id },
     data: {
       name,
@@ -58,7 +77,25 @@ export async function updateContractor(formData: FormData) {
       notes: String(formData.get("notes") ?? ""),
     },
   });
+  try {
+    await upsertContractorFirestore({
+      id: updated.id,
+      code: updated.code,
+      name: updated.name,
+      taxId: updated.taxId,
+      address: updated.address,
+      phone: updated.phone,
+      email: updated.email,
+      bankName: updated.bankName,
+      bankAccount: updated.bankAccount,
+      defaultWhtPercent: String(updated.defaultWhtPercent),
+      notes: updated.notes,
+    });
+  } catch {
+    /* ignore */
+  }
   revalidatePath("/contractors");
+  revalidatePath("/");
   revalidatePath(`/contractors/${id}/edit`);
   return { ok: true as const };
 }
@@ -76,6 +113,12 @@ export async function deleteContractor(id: string) {
     };
   }
   await prisma.contractor.delete({ where: { id } });
+  try {
+    await deleteContractorFirestore(id);
+  } catch {
+    /* ignore */
+  }
   revalidatePath("/contractors");
+  revalidatePath("/");
   return { ok: true as const };
 }

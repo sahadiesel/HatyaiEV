@@ -1,14 +1,29 @@
 import Link from "next/link";
+import { loadCompanySettingsForDisplay } from "@/lib/company-settings-server";
+import {
+  countFirestoreCollection,
+} from "@/lib/firestore-entities";
+import { firestoreCollections } from "@/lib/firestore";
 import { prisma } from "@/lib/prisma";
 
+async function countWithFirestore(
+  firestoreCollection: string,
+  prismaCount: () => Promise<number>,
+): Promise<number> {
+  const fs = await countFirestoreCollection(firestoreCollection);
+  if (fs !== null) return fs;
+  return prismaCount();
+}
+
 export default async function HomePage() {
-  const [clients, contractors, hiringContracts, subcontractAgreements, settings] = await Promise.all([
-    prisma.client.count(),
-    prisma.contractor.count(),
-    prisma.hiringContract.count(),
-    prisma.subcontractAgreement.count(),
-    prisma.companySettings.findUnique({ where: { id: 1 } }),
-  ]);
+  const [clients, contractors, hiringContracts, subcontractAgreements, settings] =
+    await Promise.all([
+      countWithFirestore(firestoreCollections.clients, () => prisma.client.count()),
+      countWithFirestore(firestoreCollections.contractors, () => prisma.contractor.count()),
+      prisma.hiringContract.count(),
+      prisma.subcontractAgreement.count(),
+      loadCompanySettingsForDisplay(),
+    ]);
 
   return (
     <div className="space-y-6">
@@ -32,11 +47,11 @@ export default async function HomePage() {
         <dl className="mt-3 space-y-1 text-sm text-slate-700">
           <div>
             <dt className="font-medium text-slate-500">ชื่อ</dt>
-            <dd>{settings?.companyName || "— ยังไม่ได้ตั้งค่า —"}</dd>
+            <dd>{settings?.companyName ?? "— ยังไม่ได้ตั้งค่า —"}</dd>
           </div>
           <div>
             <dt className="font-medium text-slate-500">เลขผู้เสียภาษี</dt>
-            <dd>{settings?.taxId || "—"}</dd>
+            <dd>{settings?.taxId ?? "—"}</dd>
           </div>
         </dl>
         <Link
