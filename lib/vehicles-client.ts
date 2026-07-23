@@ -1,6 +1,6 @@
 "use client";
 
-import { collection, getDocs } from "firebase/firestore";
+import { collection, doc, getDocs, serverTimestamp, setDoc } from "firebase/firestore";
 import type {
   VehicleCostLine,
   VehiclePurchaseType,
@@ -43,6 +43,8 @@ export function parseVehicleRecord(id: string, d: Record<string, unknown>): Vehi
     sellerEntityId: d.sellerEntityId ? String(d.sellerEntityId) : null,
     purchaseDate: String(d.purchaseDate ?? ""),
     purchasePrice: String(d.purchasePrice ?? "0"),
+    purchaseContractAmount: String(d.purchaseContractAmount ?? d.purchasePrice ?? "0"),
+    saleContractAmount: String(d.saleContractAmount ?? d.expectedSalePrice ?? "0"),
     costLines: parseCostLines(d.costLines ?? d.costLinesJson),
     expectedSalePrice: String(d.expectedSalePrice ?? "0"),
     commissionAmount: String(d.commissionAmount ?? "0"),
@@ -64,5 +66,28 @@ export async function listVehiclesClient(): Promise<VehicleRecord[]> {
   } catch (e) {
     console.error("[listVehiclesClient]", e);
     return [];
+  }
+}
+
+export async function updateVehicleFieldsClient(
+  id: string,
+  patch: Partial<
+    Pick<
+      VehicleRecord,
+      "saleContractAmount" | "purchaseContractAmount" | "expectedSalePrice" | "soldPrice"
+    >
+  >,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const db = getFirestoreDb();
+  if (!db) return { ok: false, message: "ยังไม่ได้ตั้งค่า Firebase" };
+  try {
+    await setDoc(
+      doc(db, firestoreCollections.vehicles, id),
+      { ...patch, updatedAt: serverTimestamp() },
+      { merge: true },
+    );
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
   }
 }

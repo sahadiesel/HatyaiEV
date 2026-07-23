@@ -66,6 +66,13 @@ export type VehicleRecord = {
   sellerEntityId: string | null;
   purchaseDate: string;
   purchasePrice: string;
+  /**
+   * ราคาเต็มในสัญญาซื้อเข้า (ล็อกเป็นฐานคำนวณ Margin ป.111)
+   * ถ้าว่าง ใช้ purchasePrice
+   */
+  purchaseContractAmount: string;
+  /** ราคาเต็มในสัญญาขายออก */
+  saleContractAmount: string;
   /** ต้นทุนสะสม (อะไหล่/ค่าแรง) */
   costLines: VehicleCostLine[];
   /** ราคาตั้งขาย (ยังไม่ขาย) */
@@ -142,6 +149,10 @@ export type ContractPartySnapshot = {
   entityKind: EntityKind;
 };
 
+export type CashChannel = "CASH" | "BANK";
+
+export type CashVatType = "FULL_VAT" | "MARGIN_VAT" | "NO_VAT";
+
 export type CashDirection = "IN" | "OUT";
 
 export type CashbookEntryType =
@@ -150,7 +161,9 @@ export type CashbookEntryType =
   | "VEHICLE_PURCHASE"
   | "VEHICLE_SALE"
   | "PARTS"
-  | "MISC";
+  | "MISC"
+  | "PURCHASE_DEPOSIT"
+  | "SALE_DEPOSIT";
 
 export type CashbookEntry = {
   id: string;
@@ -160,17 +173,35 @@ export type CashbookEntry = {
   entryType: CashbookEntryType;
   amount: string;
   description: string;
-  /** อ้างอิงเอกสารระบบ */
   documentId: string | null;
   documentKind: string | null;
   documentNumber: string | null;
   vehicleId: string | null;
   entityId: string | null;
+  channel: CashChannel;
+  bankAccountId: string | null;
+  taxBasisAmount: string | null;
+  vatType: CashVatType | null;
+  customerVatAmount: string | null;
+  remittanceVatAmount: string | null;
   createdByName: string;
   createdAt: string;
 };
 
 export type CashSettings = {
   openingBalance: string;
+  cashOpeningBalance: string;
+  defaultBankAccountId: string | null;
   updatedAt?: string;
+};
+
+export type BankAccountRecord = {
+  id: string;
+  accountName: string;
+  bankName: string;
+  accountNumber: string;
+  openingBalance: string;
+  isPrimary: boolean;
+  active: boolean;
+  notes: string;
 };

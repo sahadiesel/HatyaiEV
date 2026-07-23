@@ -137,6 +137,18 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
             <input name="purchasePrice" className={inp} required defaultValue="0" />
           </label>
           <label className="text-sm">
+            <span className="mb-1 block text-slate-600">มูลค่าสัญญาซื้อเข้า (ล็อกฐาน ป.111)</span>
+            <input
+              name="purchaseContractAmount"
+              className={inp}
+              defaultValue="0"
+              placeholder="เท่ากับราคาซื้อถ้าไม่กรอก"
+            />
+            <span className="mt-1 block text-xs text-slate-500">
+              เช่น สัญญาซื้อ 200,000 — ใช้คำนวณ Margin เมื่อขาย
+            </span>
+          </label>
+          <label className="text-sm">
             <span className="mb-1 block text-slate-600">ราคาตั้งขาย</span>
             <input name="expectedSalePrice" className={inp} defaultValue="0" />
           </label>

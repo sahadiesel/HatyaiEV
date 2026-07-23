@@ -101,6 +101,11 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    match /bankAccounts/{docId} {
+      allow read: if isApprovedUser();
+      allow write: if isAdmin();
+    }
+
     match /vehicleBrands/{docId} {
       allow read: if isApprovedUser();
       allow write: if isAdmin();

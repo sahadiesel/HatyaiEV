@@ -1,5 +1,12 @@
 import { canWriteFirestore, FIRESTORE_WRITE_HINT } from "@/lib/data-primary";
-import type { CashbookEntry, CashDirection, CashSettings, CashbookEntryType } from "@/lib/domain-types";
+import type {
+  CashbookEntry,
+  CashChannel,
+  CashDirection,
+  CashSettings,
+  CashbookEntryType,
+  CashVatType,
+} from "@/lib/domain-types";
 import { parseAmount, roundMoney2 } from "@/lib/documents/calc";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { cashSettingsDocId, firestoreCollections } from "@/lib/firestore-collections";
@@ -10,6 +17,8 @@ function db() {
 }
 
 function parseEntry(id: string, d: Record<string, unknown>): CashbookEntry {
+  const channel: CashChannel =
+    d.channel === "BANK" || d.bankAccountId ? "BANK" : d.channel === "CASH" ? "CASH" : "CASH";
   return {
     id,
     entryNo: String(d.entryNo ?? ""),
@@ -23,6 +32,12 @@ function parseEntry(id: string, d: Record<string, unknown>): CashbookEntry {
     documentNumber: d.documentNumber ? String(d.documentNumber) : null,
     vehicleId: d.vehicleId ? String(d.vehicleId) : null,
     entityId: d.entityId ? String(d.entityId) : null,
+    channel,
+    bankAccountId: d.bankAccountId ? String(d.bankAccountId) : null,
+    taxBasisAmount: d.taxBasisAmount != null ? String(d.taxBasisAmount) : null,
+    vatType: (d.vatType as CashVatType) || null,
+    customerVatAmount: d.customerVatAmount != null ? String(d.customerVatAmount) : null,
+    remittanceVatAmount: d.remittanceVatAmount != null ? String(d.remittanceVatAmount) : null,
     createdByName: String(d.createdByName ?? ""),
     createdAt: String(d.createdAt ?? ""),
   };
@@ -30,17 +45,26 @@ function parseEntry(id: string, d: Record<string, unknown>): CashbookEntry {
 
 export async function getCashSettings(): Promise<CashSettings> {
   const firestore = db();
-  if (!firestore) return { openingBalance: "0" };
+  if (!firestore) {
+    return { openingBalance: "0", cashOpeningBalance: "0", defaultBankAccountId: null };
+  }
   try {
     const snap = await firestore
       .collection(firestoreCollections.cashSettings)
       .doc(cashSettingsDocId)
       .get();
-    if (!snap.exists) return { openingBalance: "0" };
+    if (!snap.exists) {
+      return { openingBalance: "0", cashOpeningBalance: "0", defaultBankAccountId: null };
+    }
     const d = snap.data()!;
-    return { openingBalance: String(d.openingBalance ?? "0"), updatedAt: d.updatedAt ? String(d.updatedAt) : undefined };
+    return {
+      openingBalance: String(d.openingBalance ?? "0"),
+      cashOpeningBalance: String(d.cashOpeningBalance ?? d.openingBalance ?? "0"),
+      defaultBankAccountId: d.defaultBankAccountId ? String(d.defaultBankAccountId) : null,
+      updatedAt: d.updatedAt ? String(d.updatedAt) : undefined,
+    };
   } catch {
-    return { openingBalance: "0" };
+    return { openingBalance: "0", cashOpeningBalance: "0", defaultBankAccountId: null };
   }
 }
 
@@ -49,7 +73,11 @@ export async function setOpeningBalance(amount: string) {
   const firestore = db();
   if (!firestore) return { ok: false as const, message: FIRESTORE_WRITE_HINT };
   await firestore.collection(firestoreCollections.cashSettings).doc(cashSettingsDocId).set(
-    { openingBalance: String(parseAmount(amount)), updatedAt: new Date().toISOString() },
+    {
+      openingBalance: String(parseAmount(amount)),
+      cashOpeningBalance: String(parseAmount(amount)),
+      updatedAt: new Date().toISOString(),
+    },
     { merge: true },
   );
   return { ok: true as const };
@@ -104,12 +132,14 @@ export type PostCashbookInput = {
   vehicleId?: string | null;
   entityId?: string | null;
   createdByName?: string;
+  channel?: CashChannel;
+  bankAccountId?: string | null;
+  taxBasisAmount?: string | number | null;
+  vatType?: CashVatType | null;
+  customerVatAmount?: string | number | null;
+  remittanceVatAmount?: string | number | null;
 };
 
-/**
- * บันทึกรายการสมุดเงินสด (ใช้ทั้ง Manual และ Automatic Sync จากเอกสาร)
- * ถ้ามี documentId อยู่แล้ว จะไม่ลงซ้ำ
- */
 export async function postCashbookEntry(input: PostCashbookInput) {
   if (!canWriteFirestore()) return { ok: false as const, message: FIRESTORE_WRITE_HINT };
   const firestore = db();
@@ -125,6 +155,8 @@ export async function postCashbookEntry(input: PostCashbookInput) {
     }
   }
 
+  const channel: CashChannel =
+    input.channel ?? (input.bankAccountId ? "BANK" : "CASH");
   const entryDate = input.entryDate || new Date().toISOString().slice(0, 10);
   const entryNo = await nextCashbookNo(entryDate);
   const id = newEntityId();
@@ -141,6 +173,21 @@ export async function postCashbookEntry(input: PostCashbookInput) {
     documentNumber: input.documentNumber ?? null,
     vehicleId: input.vehicleId ?? null,
     entityId: input.entityId ?? null,
+    channel,
+    bankAccountId: channel === "BANK" ? (input.bankAccountId ?? null) : null,
+    taxBasisAmount:
+      input.taxBasisAmount != null && input.taxBasisAmount !== ""
+        ? roundMoney2(parseAmount(input.taxBasisAmount)).toFixed(2)
+        : null,
+    vatType: input.vatType ?? null,
+    customerVatAmount:
+      input.customerVatAmount != null && input.customerVatAmount !== ""
+        ? roundMoney2(parseAmount(input.customerVatAmount)).toFixed(2)
+        : null,
+    remittanceVatAmount:
+      input.remittanceVatAmount != null && input.remittanceVatAmount !== ""
+        ? roundMoney2(parseAmount(input.remittanceVatAmount)).toFixed(2)
+        : null,
     createdByName: input.createdByName ?? "",
     createdAt: new Date().toISOString(),
   };
@@ -161,25 +208,67 @@ export async function deleteCashbookEntry(id: string) {
   return { ok: true as const };
 }
 
-/** คำนวณยอดคงเหลือกระแสเงินสด = ยอดยกมา + รับ − จ่าย */
-export async function calcCashflowBalance(): Promise<{
-  openingBalance: number;
-  totalIn: number;
-  totalOut: number;
-  balance: number;
-  entries: CashbookEntry[];
-}> {
-  const [settings, entries] = await Promise.all([getCashSettings(), listCashbookEntries()]);
-  const openingBalance = parseAmount(settings.openingBalance);
+function sumChannel(
+  entries: CashbookEntry[],
+  opening: number,
+  pred: (e: CashbookEntry) => boolean,
+) {
   let totalIn = 0;
   let totalOut = 0;
   for (const e of entries) {
+    if (!pred(e)) continue;
     const amt = parseAmount(e.amount);
     if (e.direction === "IN") totalIn += amt;
     else totalOut += amt;
   }
   totalIn = roundMoney2(totalIn);
   totalOut = roundMoney2(totalOut);
-  const balance = roundMoney2(openingBalance + totalIn - totalOut);
-  return { openingBalance, totalIn, totalOut, balance, entries };
+  return {
+    openingBalance: opening,
+    totalIn,
+    totalOut,
+    balance: roundMoney2(opening + totalIn - totalOut),
+  };
+}
+
+/** คำนวณยอดคงเหลือกระแสเงินสด = ยอดยกมา + รับ − จ่าย */
+export async function calcCashflowBalance(): Promise<{
+  openingBalance: number;
+  totalIn: number;
+  totalOut: number;
+  balance: number;
+  cashBalance: number;
+  bankBalances: Record<string, number>;
+  entries: CashbookEntry[];
+}> {
+  const [settings, entries] = await Promise.all([getCashSettings(), listCashbookEntries()]);
+  const openingBalance = parseAmount(settings.openingBalance);
+  const cashOpening = parseAmount(settings.cashOpeningBalance || settings.openingBalance);
+  const overall = sumChannel(entries, openingBalance, () => true);
+  const cash = sumChannel(
+    entries,
+    cashOpening,
+    (e) => e.channel === "CASH" || (!e.bankAccountId && e.channel !== "BANK"),
+  );
+
+  const bankBalances: Record<string, number> = {};
+  for (const e of entries) {
+    if (e.channel !== "BANK" || !e.bankAccountId) continue;
+    if (!(e.bankAccountId in bankBalances)) bankBalances[e.bankAccountId] = 0;
+    const amt = parseAmount(e.amount);
+    bankBalances[e.bankAccountId] += e.direction === "IN" ? amt : -amt;
+  }
+  for (const k of Object.keys(bankBalances)) {
+    bankBalances[k] = roundMoney2(bankBalances[k]);
+  }
+
+  return {
+    openingBalance: overall.openingBalance,
+    totalIn: overall.totalIn,
+    totalOut: overall.totalOut,
+    balance: overall.balance,
+    cashBalance: cash.balance,
+    bankBalances,
+    entries,
+  };
 }

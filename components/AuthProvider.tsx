@@ -17,6 +17,22 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+const PROFILE_TIMEOUT_MS = 8000;
+
+async function fetchProfileSafe(uid: string): Promise<UserProfile | null> {
+  try {
+    return await Promise.race([
+      getUserProfile(uid),
+      new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), PROFILE_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (e) {
+    console.error("[AuthProvider] getUserProfile failed", e);
+    return null;
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -27,7 +43,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setProfile(null);
       return;
     }
-    const p = await getUserProfile(user.uid);
+    const p = await fetchProfileSafe(user.uid);
     setProfile(p);
   }, [user]);
 
@@ -38,18 +54,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    // กันค้างตลอดถ้า auth callback ไม่มา
+    const safety = setTimeout(() => {
+      setLoading((prev) => {
+        if (prev) console.warn("[AuthProvider] auth loading timed out");
+        return false;
+      });
+    }, 12000);
+
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
-      setUser(firebaseUser);
-      if (firebaseUser) {
-        const p = await getUserProfile(firebaseUser.uid);
-        setProfile(p);
-      } else {
+      try {
+        setUser(firebaseUser);
+        if (firebaseUser) {
+          const p = await fetchProfileSafe(firebaseUser.uid);
+          setProfile(p);
+        } else {
+          setProfile(null);
+        }
+      } catch (e) {
+        console.error("[AuthProvider] onAuthStateChanged error", e);
         setProfile(null);
+      } finally {
+        clearTimeout(safety);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
-    return () => unsub();
+    return () => {
+      clearTimeout(safety);
+      unsub();
+    };
   }, []);
 
   const value = useMemo(

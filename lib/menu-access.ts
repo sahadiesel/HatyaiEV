@@ -7,6 +7,7 @@ export const APP_MENUS = [
   { id: "cashbook", label: "สมุดเงินสด", href: "/cashbook" },
   { id: "settings_shop", label: "ตั้งค่าร้าน", href: "/settings" },
   { id: "settings_vehicles", label: "ตั้งค่ารถยนต์", href: "/settings/vehicles" },
+  { id: "settings_bank", label: "ตั้งค่าบัญชีธนาคาร", href: "/settings/bank-accounts" },
 ] as const;
 
 export type MenuId = (typeof APP_MENUS)[number]["id"];
@@ -38,6 +39,7 @@ export function pathnameToMenuId(pathname: string): MenuId | null {
   if (pathname.startsWith("/contracts")) return "documents";
   if (pathname.startsWith("/documents")) return "documents";
   if (pathname.startsWith("/cashbook")) return "cashbook";
+  if (pathname.startsWith("/settings/bank-accounts")) return "settings_bank";
   if (pathname.startsWith("/settings/vehicles")) return "settings_vehicles";
   if (pathname.startsWith("/settings")) return "settings_shop";
   if (pathname.startsWith("/admin")) return null;

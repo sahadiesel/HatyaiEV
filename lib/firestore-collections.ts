@@ -13,6 +13,7 @@ export const firestoreCollections = {
   cashbookEntries: "cashbookEntries",
   cashSettings: "cashSettings",
   vehicleBrands: "vehicleBrands",
+  bankAccounts: "bankAccounts",
 } as const;
 
 export const companySettingsDocId = "main";

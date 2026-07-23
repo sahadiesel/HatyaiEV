@@ -36,6 +36,12 @@ export async function saveVehicleAction(formData: FormData) {
     sellerEntityId: String(formData.get("sellerEntityId") ?? "").trim() || null,
     purchaseDate: String(formData.get("purchaseDate") ?? ""),
     purchasePrice: String(formData.get("purchasePrice") ?? "0"),
+    purchaseContractAmount: String(
+      formData.get("purchaseContractAmount") ?? formData.get("purchasePrice") ?? "0",
+    ),
+    saleContractAmount: String(
+      formData.get("saleContractAmount") ?? formData.get("expectedSalePrice") ?? "0",
+    ),
     expectedSalePrice: String(formData.get("expectedSalePrice") ?? "0"),
     commissionAmount: String(formData.get("commissionAmount") ?? "0"),
     soldDate: String(formData.get("soldDate") ?? ""),
@@ -53,7 +59,7 @@ export async function saveVehicleAction(formData: FormData) {
   const result = await createVehicle(payload);
   if (result.ok) {
     revalidate(result.id);
-    // Auto cashbook: จ่ายซื้อรถ
+    // Auto cashbook: จ่ายซื้อรถ (NO_VAT เมื่อซื้อจากบุคคล)
     const price = Number(String(payload.purchasePrice).replace(/,/g, "")) || 0;
     if (price > 0) {
       await postCashbookEntry({
@@ -64,6 +70,8 @@ export async function saveVehicleAction(formData: FormData) {
         description: `ซื้อรถเข้า ${payload.licensePlate || payload.brand} ${payload.model}`.trim(),
         vehicleId: result.id,
         entityId: payload.sellerEntityId,
+        channel: "BANK",
+        vatType: payload.purchaseType === "INDIVIDUAL_NO_VAT" ? "NO_VAT" : "FULL_VAT",
       });
     }
   }

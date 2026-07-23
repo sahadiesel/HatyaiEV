@@ -68,5 +68,29 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
+  // มี user แต่โหลดโปรไฟล์ไม่สำเร็จ — ไม่ค้างหน้าโหลด
+  if (user && !profile && !isPublic) {
+    return (
+      <div className="mx-auto max-w-md space-y-4 rounded-lg border border-amber-200 bg-amber-50 p-6 text-center shadow-sm">
+        <h2 className="text-lg font-semibold text-amber-950">โหลดข้อมูลผู้ใช้ไม่สำเร็จ</h2>
+        <p className="text-sm text-amber-900">
+          เข้าสู่ระบบแล้ว แต่ดึงโปรไฟล์จาก Firestore ไม่ได้ — ลองรีเฟรช หรือเข้าสู่ระบบใหม่
+        </p>
+        <div className="flex justify-center gap-3">
+          <button
+            type="button"
+            className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white"
+            onClick={() => window.location.reload()}
+          >
+            รีเฟรช
+          </button>
+          <Link href="/login" className="inline-block text-sm font-medium text-blue-800 hover:underline">
+            หน้าเข้าสู่ระบบ
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return <>{children}</>;
 }

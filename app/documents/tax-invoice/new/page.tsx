@@ -1,7 +1,12 @@
 import { CommercialDocumentForm } from "@/components/documents/CommercialDocumentForm";
 import { loadClientsForDocument } from "../../document-page-data";
+import { calcVehicleSaleVatTotals } from "@/lib/documents/calc";
+import {
+  effectivePurchaseContractAmount,
+  effectiveSaleContractAmount,
+} from "@/lib/finance/vat-margin";
 import { getVehicle } from "@/lib/vehicles-repository";
-import { calcVehicleTotalCost, summarizeVehicleEconomics } from "@/lib/vehicles/calc";
+import { calcVehicleTotalCost } from "@/lib/vehicles/calc";
 import {
   defaultCommercialMeta,
   emptyLine,
@@ -15,7 +20,7 @@ export const dynamic = "force-dynamic";
 export default async function NewTaxInvoicePage({
   searchParams,
 }: {
-  searchParams: Promise<{ vehicleId?: string }>;
+  searchParams: Promise<{ vehicleId?: string; deposit?: string }>;
 }) {
   const sp = await searchParams;
   const clients = await loadClientsForDocument();
@@ -35,16 +40,24 @@ export default async function NewTaxInvoicePage({
   if (sp.vehicleId) {
     const vehicle = await getVehicle(sp.vehicleId);
     if (vehicle) {
-      const eco = summarizeVehicleEconomics(vehicle);
-      const totalCost = calcVehicleTotalCost(vehicle);
-      const sale = eco.expectedSale || Number(vehicle.soldPrice) || 0;
-      const vatInfo = eco.saleVat;
+      const purchaseBase = effectivePurchaseContractAmount(vehicle);
+      const saleFull = effectiveSaleContractAmount(vehicle);
+      const depositParam = sp.deposit ? Number(sp.deposit) : NaN;
+      const sale = Number.isFinite(depositParam) && depositParam > 0 ? depositParam : saleFull;
+      const totalCost = Math.max(purchaseBase, calcVehicleTotalCost(vehicle));
+      const vatInfo = calcVehicleSaleVatTotals({
+        purchaseType: vehicle.purchaseType,
+        salePriceInclusive: sale,
+        totalCost,
+        vatRatePercent: 7,
+      });
       const scheme =
         vehicle.purchaseType === "INDIVIDUAL_NO_VAT" ? ("MARGIN" as const) : ("FULL_SALE" as const);
+      const isDeposit = Number.isFinite(depositParam) && depositParam > 0;
       const lines: DocumentLineItem[] = [
         {
           ...emptyLine(1),
-          description: `ขายรถยนต์ ${vehicle.brand} ${vehicle.model} ทะเบียน ${vehicle.licensePlate || "—"} VIN ${vehicle.vin || "—"} (ราคารวม VAT)`,
+          description: `ขายรถยนต์ ${vehicle.brand} ${vehicle.model} ทะเบียน ${vehicle.licensePlate || "—"} VIN ${vehicle.vin || "—"}${isDeposit ? " (มัดจำ รวม VAT)" : " (ราคารวม VAT)"}`,
           unitPrice: String(sale),
           quantity: "1",
           amount: String(sale),
@@ -57,7 +70,7 @@ export default async function NewTaxInvoicePage({
         vehicleId: vehicle.id,
         vehicleLabel: `${vehicle.brand} ${vehicle.model} ${vehicle.licensePlate}`,
         totalCostSnapshot: totalCost,
-        marginSnapshot: vatInfo?.margin,
+        marginSnapshot: vatInfo.margin,
         vatRatePercent: 7,
       };
       initial = {
@@ -69,8 +82,8 @@ export default async function NewTaxInvoicePage({
         meta,
         notes:
           scheme === "MARGIN"
-            ? `VAT Margin Scheme (ป.111): ต้นทุนรวม ${totalCost.toFixed(2)} บาท · กำไรขั้นต้น ${(vatInfo?.margin ?? 0).toFixed(2)} · VAT ${(vatInfo?.vatAmount ?? 0).toFixed(2)}`
-            : `VAT จากยอดขายเต็ม · VAT ${(vatInfo?.vatAmount ?? 0).toFixed(2)} บาท`,
+            ? `VAT Margin Scheme (ป.111): ฐานซื้อสัญญา ${purchaseBase.toFixed(2)} · กำไรขั้นต้น ${vatInfo.margin.toFixed(2)} · VAT นำส่ง ${vatInfo.vatAmount.toFixed(2)}`
+            : `VAT จากยอดขายเต็ม · VAT ${vatInfo.vatAmount.toFixed(2)} บาท`,
       };
     }
   }

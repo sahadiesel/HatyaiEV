@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
-import { savePaymentVoucherAction } from "@/app/documents/actions";
+import { useEffect, useState, useTransition } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { DocumentPrintLink } from "@/components/documents/DocumentPrintLink";
+import { savePaymentVoucherClient } from "@/lib/documents-client";
+import { listEntitiesClient } from "@/lib/entities-client";
 import { defaultPaymentVoucherMeta, type PaymentVoucherMeta } from "@/lib/documents/types";
 import type { EntityRecord } from "@/lib/domain-types";
 
@@ -39,9 +40,17 @@ export function PaymentVoucherForm({
   const [assignNumber, setAssignNumber] = useState(!initial?.id);
   const [savedId, setSavedId] = useState(initial?.id ?? "");
   const [savedNumber, setSavedNumber] = useState(initial?.number ?? "");
+  const [entityOptions, setEntityOptions] = useState(entities);
+
+  useEffect(() => {
+    void listEntitiesClient().then((rows) => {
+      if (rows.length > 0) setEntityOptions(rows);
+      else if (entities.length > 0) setEntityOptions(entities);
+    });
+  }, [entities]);
 
   function onEntity(id: string) {
-    const e = entities.find((x) => x.id === id);
+    const e = entityOptions.find((x) => x.id === id);
     if (!e) return;
     setMeta((m) => ({
       ...m,
@@ -54,17 +63,17 @@ export function PaymentVoucherForm({
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const fd = new FormData();
-    if (savedId) fd.set("id", savedId);
-    fd.set("issueDate", issueDate);
-    fd.set("totalAmount", amount);
-    fd.set("notes", notes);
-    fd.set("metaJson", JSON.stringify({ ...meta, issuedByName: profile?.name ?? "" }));
-    fd.set("issuedByName", profile?.name ?? "");
-    fd.set("assignNumber", assignNumber ? "1" : "0");
-    fd.set("postCashbook", "1");
     startTransition(async () => {
-      const res = await savePaymentVoucherAction(fd);
+      const res = await savePaymentVoucherClient({
+        id: savedId || null,
+        issueDate,
+        totalAmount: amount,
+        notes,
+        metaJson: JSON.stringify({ ...meta, issuedByName: profile?.name ?? "" }),
+        issuedByName: profile?.name ?? "",
+        assignNumber,
+        postCashbook: true,
+      });
       if (!res.ok) {
         setMsg(res.message);
         return;
@@ -91,7 +100,7 @@ export function PaymentVoucherForm({
           <span className="mb-1 block text-slate-600">เลือกผู้รับเงินจาก Entities</span>
           <select className={inp} defaultValue="" onChange={(e) => onEntity(e.target.value)}>
             <option value="">— กรอกเอง / เลือก —</option>
-            {entities.map((e) => (
+            {entityOptions.map((e) => (
               <option key={e.id} value={e.id}>
                 {e.name}
               </option>

@@ -7,8 +7,16 @@ import { listEntitiesClient } from "@/lib/entities-client";
 import { buildVehicleSalePurchaseContractHtml } from "@/lib/documents/contract-print";
 import { loadCompanyBrandClient, openPrintHtml } from "@/lib/documents/print-client";
 import { parseAmount } from "@/lib/documents/calc";
+import {
+  calcInclusiveVatBreakdown,
+  calcSaleDepositTaxInvoice,
+  effectivePurchaseContractAmount,
+} from "@/lib/finance/vat-margin";
 import { saveLegalDocClient } from "@/lib/legal-documents-client";
-import { listVehiclesClient } from "@/lib/vehicles-client";
+import { ensurePrimaryBankAccount } from "@/lib/bank-accounts-client";
+import { postCashbookEntryClient } from "@/lib/cashbook-client";
+import { listVehiclesClient, updateVehicleFieldsClient } from "@/lib/vehicles-client";
+import { formatBaht } from "@/lib/vehicles/calc";
 import type { ContractPartySnapshot, EntityRecord, VehicleRecord } from "@/lib/domain-types";
 
 const inp =
@@ -105,9 +113,30 @@ export function VehicleSaleContractForm() {
     setModel(v.model);
     setLicensePlate(v.licensePlate);
     setVin(v.vin);
-    if (parseAmount(v.expectedSalePrice) > 0) setAmount(v.expectedSalePrice);
-    else if (parseAmount(v.soldPrice) > 0) setAmount(v.soldPrice);
+    const sale =
+      parseAmount(v.saleContractAmount) > 0
+        ? v.saleContractAmount
+        : parseAmount(v.expectedSalePrice) > 0
+          ? v.expectedSalePrice
+          : parseAmount(v.soldPrice) > 0
+            ? v.soldPrice
+            : "";
+    if (sale) setAmount(sale);
   }
+
+  const selectedVehicle = vehicles.find((v) => v.id === vehicleId) ?? null;
+  const saleAmt = parseAmount(amount);
+  const depPct = parseAmount(depositPercent);
+  const depositAmt = Math.round(((saleAmt * depPct) / 100) * 100) / 100;
+  const customerBreakdown = calcInclusiveVatBreakdown(depositAmt, 7);
+  const marginTax = selectedVehicle
+    ? calcSaleDepositTaxInvoice({
+        saleContractAmount: saleAmt,
+        purchaseContractAmount: effectivePurchaseContractAmount(selectedVehicle),
+        depositInclusive: depositAmt,
+        purchaseType: selectedVehicle.purchaseType,
+      })
+    : null;
 
   async function buildHtml() {
     const company = await loadCompanyBrandClient();
@@ -210,10 +239,42 @@ export function VehicleSaleContractForm() {
         return;
       }
       setSavedNumber(res.number);
+
+      // ล็อกมูลค่าสัญญาขายบนรถ
+      await updateVehicleFieldsClient(vehicleId, {
+        saleContractAmount: amount,
+        expectedSalePrice: amount,
+      });
+
+      // ลงสมุดเงินสด: รับมัดจำเข้าบัญชีหลัก + เก็บ VAT ป.111 หลังบ้าน
+      const primary = await ensurePrimaryBankAccount();
+      if (primary && depositAmt > 0 && marginTax) {
+        await postCashbookEntryClient({
+          entryDate: issueDate,
+          direction: "IN",
+          entryType: "SALE_DEPOSIT",
+          amount: depositAmt,
+          description: `รับมัดจำขายรถ ${licensePlate || brand} ${model} (${depositPercent}%)`.trim(),
+          channel: "BANK",
+          bankAccountId: primary.id,
+          vehicleId,
+          entityId: party.entityId,
+          documentId: `sale-deposit-${res.id}`,
+          documentNumber: res.number,
+          vatType: marginTax.vatType,
+          taxBasisAmount: marginTax.taxBasisAmount,
+          customerVatAmount: marginTax.customerInvoice.vatAmount,
+          remittanceVatAmount: marginTax.remittanceVat,
+          createdByName: "",
+        });
+      }
+
       const html = await buildHtml();
       openPrintHtml(html);
       setMsgOk(true);
-      setMsg(`บันทึกแล้ว (${res.number}) และเปิดหน้าพิมพ์`);
+      setMsg(
+        `บันทึกแล้ว (${res.number}) · ล็อกราคาขาย · ลงมัดจำ ฿${formatBaht(depositAmt)} ในบัญชีธนาคาร`,
+      );
     });
   }
 
@@ -367,6 +428,35 @@ export function VehicleSaleContractForm() {
           <span className="mb-1 block text-slate-600">ส่วนที่เหลือ (%)</span>
           <input className={inp} value={balancePercent} onChange={(e) => setBalancePercent(e.target.value)} />
         </label>
+      </div>
+
+      {saleAmt > 0 && (
+        <div className="rounded-md border border-blue-200 bg-blue-50/60 p-4 text-sm text-slate-800">
+          <p className="font-semibold text-slate-900">ใบกำกับภาษีมัดจำ (แสดงลูกค้า) + VAT ป.111 (หลังบ้าน)</p>
+          <p className="mt-2">
+            มัดจำ {depositPercent}% = <strong>฿{formatBaht(depositAmt)}</strong>
+            {" → "}
+            ฐาน ฿{formatBaht(customerBreakdown.base)} + VAT 7% ฿{formatBaht(customerBreakdown.vatAmount)}
+          </p>
+          {marginTax && selectedVehicle?.purchaseType === "INDIVIDUAL_NO_VAT" && (
+            <p className="mt-1 text-xs text-slate-600">
+              นำส่งสรรพากรตาม Margin: กำไรส่วนมัดจำ ฿{formatBaht(marginTax.marginPortion)} · VAT นำส่ง ฿
+              {formatBaht(marginTax.remittanceVat)} (ไม่ใช้ VAT จากยอดเต็มของลูกค้า)
+            </p>
+          )}
+          {selectedVehicle && (
+            <p className="mt-1 text-xs text-slate-500">
+              ฐานซื้อสัญญา ฿{formatBaht(effectivePurchaseContractAmount(selectedVehicle))} · ขายสัญญา ฿
+              {formatBaht(saleAmt)}
+            </p>
+          )}
+          <p className="mt-2 text-xs">
+            หลังบันทึก: ล็อก sale_contract_amount บนรถ + ลงสมุดเงินสดเข้าบัญชีกสิกรไทยอัตโนมัติ
+          </p>
+        </div>
+      )}
+
+      <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">
           <span className="mb-1 block text-slate-600">ธนาคาร</span>
           <input className={inp} value={bankName} onChange={(e) => setBankName(e.target.value)} />

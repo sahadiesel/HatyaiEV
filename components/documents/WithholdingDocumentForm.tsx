@@ -2,13 +2,22 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
-import { saveWithholdingDocument } from "@/app/documents/actions";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { DocumentPrintLink } from "@/components/documents/DocumentPrintLink";
 import { useAuth } from "@/components/AuthProvider";
-import { documentPrintUrl } from "@/lib/documents/print-url";
 import { calcWithholdingTotals, parseAmount } from "@/lib/documents/calc";
-import { defaultWithholdingMeta, type WithholdingDocumentMeta } from "@/lib/documents/types";
+import {
+  getDocumentClient,
+  printDocumentClient,
+  saveWithholdingDocumentClient,
+} from "@/lib/documents-client";
+import { listEntitiesClient } from "@/lib/entities-client";
+import { entityHasRoleGroup } from "@/lib/entity-roles";
+import {
+  defaultWithholdingMeta,
+  parseMetaJson,
+  type WithholdingDocumentMeta,
+} from "@/lib/documents/types";
 
 const inp =
   "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
@@ -26,8 +35,10 @@ const WHT_RATES = ["1", "2", "3", "5"] as const;
 export function WithholdingDocumentForm({
   contractors,
   initial,
+  documentId,
 }: {
   contractors: ContractorOption[];
+  documentId?: string;
   initial?: {
     id: string;
     number: string;
@@ -43,13 +54,50 @@ export function WithholdingDocumentForm({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
+  const [contractorOptions, setContractorOptions] = useState(contractors);
+  const [savedId, setSavedId] = useState(initial?.id ?? documentId ?? "");
+  const [savedNumber, setSavedNumber] = useState(initial?.number ?? "");
   const [meta, setMeta] = useState<WithholdingDocumentMeta>(initial?.meta ?? defaultWithholdingMeta());
   const [contractorId, setContractorId] = useState(initial?.contractorId ?? "");
   const [issueDate, setIssueDate] = useState(
     initial?.issueDate ?? new Date().toISOString().slice(0, 10),
   );
   const [notes, setNotes] = useState(initial?.notes ?? "");
-  const [assignNumber, setAssignNumber] = useState(!initial?.id);
+  const [assignNumber, setAssignNumber] = useState(!initial?.id && !documentId);
+
+  useEffect(() => {
+    void listEntitiesClient().then((ents) => {
+      const rows = ents
+        .filter((e) => entityHasRoleGroup(e.roles, "CONTRACTOR"))
+        .map((e) => ({
+          id: e.id,
+          name: e.name,
+          taxId: e.taxId,
+          address: e.address,
+          defaultWhtPercent: e.defaultWhtPercent || "3",
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name, "th"));
+      if (rows.length > 0) setContractorOptions(rows);
+      else if (contractors.length > 0) setContractorOptions(contractors);
+    });
+  }, [contractors]);
+
+  useEffect(() => {
+    if (!documentId || initial) return;
+    void getDocumentClient(documentId).then((row) => {
+      if (!row || row.kind !== "WITHHOLDING_TAX") {
+        setMsg("ไม่พบเอกสาร");
+        return;
+      }
+      setSavedId(row.id);
+      setSavedNumber(row.number);
+      setMeta(parseMetaJson<WithholdingDocumentMeta>(row.metaJson, defaultWithholdingMeta()));
+      setContractorId(row.contractorId ?? "");
+      setIssueDate(row.issueDate.toISOString().slice(0, 10));
+      setNotes(row.notes);
+      setAssignNumber(!row.number);
+    });
+  }, [documentId, initial]);
 
   const totals = useMemo(() => {
     const base = parseAmount(meta.withholdingTaxBase);
@@ -59,7 +107,7 @@ export function WithholdingDocumentForm({
 
   function onContractorChange(id: string) {
     setContractorId(id);
-    const c = contractors.find((x) => x.id === id);
+    const c = contractorOptions.find((x) => x.id === id);
     if (!c) return;
     setMeta((m) => ({
       ...m,
@@ -72,24 +120,25 @@ export function WithholdingDocumentForm({
 
   async function submit() {
     setMsg(null);
-    const fd = new FormData();
-    if (initial?.id) fd.set("id", initial.id);
-    fd.set("contractorId", contractorId);
-    fd.set("issueDate", issueDate);
-    fd.set("notes", notes);
-    fd.set("metaJson", JSON.stringify(meta));
-    fd.set("assignNumber", assignNumber ? "1" : "0");
-    fd.set("issuedByName", profile?.name?.trim() ?? "");
-
     startTransition(async () => {
-      const r = await saveWithholdingDocument(fd);
+      const r = await saveWithholdingDocumentClient({
+        id: savedId || null,
+        contractorId: contractorId || null,
+        issueDate,
+        notes,
+        metaJson: JSON.stringify(meta),
+        assignNumber,
+        issuedByName: profile?.name?.trim() ?? "",
+      });
       if (!r.ok) {
         setMsg(r.message ?? "บันทึกไม่สำเร็จ");
         return;
       }
       const docId = r.id;
+      setSavedId(docId);
+      if (r.number) setSavedNumber(r.number);
       if (assignNumber && docId) {
-        window.open(documentPrintUrl(docId, profile?.name), "_blank", "noopener");
+        await printDocumentClient(docId, profile?.name);
       }
       router.push(`/documents/withholding/${docId}`);
       router.refresh();
@@ -100,10 +149,10 @@ export function WithholdingDocumentForm({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-semibold text-slate-900">
-          {initial?.id ? "แก้ไข" : "สร้าง"} หนังสือรับรองหัก ณ ที่จ่าย
+          {savedId ? "แก้ไข" : "สร้าง"} หนังสือรับรองหัก ณ ที่จ่าย
         </h2>
-        {initial?.number && (
-          <span className="font-mono text-sm text-slate-600">เลขที่ {initial.number}</span>
+        {savedNumber && (
+          <span className="font-mono text-sm text-slate-600">เลขที่ {savedNumber}</span>
         )}
       </div>
       <p className="text-sm text-slate-600">
@@ -122,7 +171,7 @@ export function WithholdingDocumentForm({
               disabled={pending}
             >
               <option value="">— เลือกผู้รับเหมา —</option>
-              {contractors.map((c) => (
+              {contractorOptions.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
@@ -289,9 +338,9 @@ export function WithholdingDocumentForm({
         >
           {pending ? "กำลังบันทึก…" : "บันทึก"}
         </button>
-        {initial?.id && (
+        {savedId && (
           <DocumentPrintLink
-            documentId={initial.id}
+            documentId={savedId}
             className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
           />
         )}

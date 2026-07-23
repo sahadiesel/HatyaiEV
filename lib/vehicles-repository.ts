@@ -55,6 +55,10 @@ function parseVehicle(id: string, d: Record<string, unknown>): VehicleRecord {
     sellerEntityId: d.sellerEntityId ? String(d.sellerEntityId) : null,
     purchaseDate: String(d.purchaseDate ?? ""),
     purchasePrice: String(d.purchasePrice ?? "0"),
+    purchaseContractAmount: String(
+      d.purchaseContractAmount ?? d.purchasePrice ?? "0",
+    ),
+    saleContractAmount: String(d.saleContractAmount ?? d.expectedSalePrice ?? "0"),
     costLines: parseCostLines(d.costLines ?? d.costLinesJson),
     expectedSalePrice: String(d.expectedSalePrice ?? "0"),
     commissionAmount: String(d.commissionAmount ?? "0"),
@@ -81,6 +85,8 @@ function toPayload(v: VehicleRecord) {
     sellerEntityId: v.sellerEntityId,
     purchaseDate: v.purchaseDate,
     purchasePrice: v.purchasePrice,
+    purchaseContractAmount: v.purchaseContractAmount || v.purchasePrice,
+    saleContractAmount: v.saleContractAmount || v.expectedSalePrice,
     costLines: v.costLines,
     expectedSalePrice: v.expectedSalePrice,
     commissionAmount: v.commissionAmount,
@@ -162,6 +168,14 @@ export async function createVehicle(
       sellerEntityId: input.sellerEntityId ?? null,
       purchaseDate: input.purchaseDate ?? new Date().toISOString().slice(0, 10),
       purchasePrice: input.purchasePrice ?? "0",
+      purchaseContractAmount:
+        input.purchaseContractAmount && Number(input.purchaseContractAmount) > 0
+          ? input.purchaseContractAmount
+          : input.purchasePrice ?? "0",
+      saleContractAmount:
+        input.saleContractAmount && Number(input.saleContractAmount) > 0
+          ? input.saleContractAmount
+          : input.expectedSalePrice ?? "0",
       costLines: input.costLines ?? [],
       expectedSalePrice: input.expectedSalePrice ?? "0",
       commissionAmount: input.commissionAmount ?? "0",

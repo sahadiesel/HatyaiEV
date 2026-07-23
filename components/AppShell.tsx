@@ -24,6 +24,7 @@ const adminSettingsNav = [
   { href: "/admin/users", label: "การตั้งค่าผู้ใช้งาน", activePrefix: "/admin/users" },
   { href: "/settings", label: "ตั้งค่าร้าน", activePrefix: "/settings", exact: true },
   { href: "/settings/vehicles", label: "ตั้งค่ารถยนต์", activePrefix: "/settings/vehicles" },
+  { href: "/settings/bank-accounts", label: "ตั้งค่าบัญชีธนาคาร", activePrefix: "/settings/bank-accounts" },
 ] as const;
 
 function isNavActive(pathname: string, href: string, activePrefix?: string, exact?: boolean) {

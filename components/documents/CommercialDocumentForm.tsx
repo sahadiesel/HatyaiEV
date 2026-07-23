@@ -3,12 +3,18 @@
 import type { DocumentKind } from "@/lib/documents-firestore-types";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
-import { saveCommercialDocument } from "@/app/documents/actions";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { DocumentPrintLink } from "@/components/documents/DocumentPrintLink";
 import { useAuth } from "@/components/AuthProvider";
-import { documentPrintUrl } from "@/lib/documents/print-url";
 import { calcCommercialTotals, calcVehicleSaleVatTotals, parseAmount, recalcLineAmount } from "@/lib/documents/calc";
+import {
+  getDocumentClient,
+  printDocumentClient,
+  saveCommercialDocumentClient,
+  toCommercialFormInitial,
+} from "@/lib/documents-client";
+import { listEntitiesClient } from "@/lib/entities-client";
+import { entityHasRoleGroup } from "@/lib/entity-roles";
 import {
   defaultCommercialMeta,
   DOCUMENT_KIND_ROUTES,
@@ -20,17 +26,47 @@ import {
 const inp =
   "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
 
-export type ClientOption = { id: string; name: string; taxId: string; address: string; phone: string };
+export type ClientOption = {
+  id: string;
+  name: string;
+  taxId: string;
+  address: string;
+  phone: string;
+  branchHeadOffice?: boolean;
+  branchNo?: string;
+};
+
+function toClientOption(e: {
+  id: string;
+  name: string;
+  taxId: string;
+  address: string;
+  phone: string;
+  branchHeadOffice?: boolean;
+  branchNo?: string;
+}): ClientOption {
+  return {
+    id: e.id,
+    name: e.name,
+    taxId: e.taxId,
+    address: e.address,
+    phone: e.phone,
+    branchHeadOffice: e.branchHeadOffice !== false,
+    branchNo: e.branchNo ?? "",
+  };
+}
 
 export function CommercialDocumentForm({
   kind,
   listHref,
   clients,
   initial,
+  documentId,
 }: {
   kind: DocumentKind;
   listHref: string;
   clients: ClientOption[];
+  documentId?: string;
   initial?: {
     id: string;
     number: string;
@@ -46,6 +82,9 @@ export function CommercialDocumentForm({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
+  const [loadingDoc, setLoadingDoc] = useState(Boolean(documentId && !initial));
+  const [saved, setSaved] = useState(initial ?? null);
+  const [clientOptions, setClientOptions] = useState<ClientOption[]>(clients);
   const [lines, setLines] = useState<DocumentLineItem[]>(
     initial?.lines?.length ? initial.lines : [emptyLine(1), emptyLine(2), emptyLine(3)],
   );
@@ -55,7 +94,50 @@ export function CommercialDocumentForm({
     initial?.issueDate ?? new Date().toISOString().slice(0, 10),
   );
   const [notes, setNotes] = useState(initial?.notes ?? "");
-  const [assignNumber, setAssignNumber] = useState(!initial?.id);
+  const [assignNumber, setAssignNumber] = useState(!initial?.id && !documentId);
+
+  useEffect(() => {
+    void listEntitiesClient().then((ents) => {
+      const fromEntities = ents
+        .filter(
+          (e) =>
+            entityHasRoleGroup(e.roles, "CUSTOMER_BUYER") || entityHasRoleGroup(e.roles, "HIRER"),
+        )
+        .map(toClientOption)
+        .sort((a, b) => a.name.localeCompare(b.name, "th"));
+      if (fromEntities.length > 0) {
+        setClientOptions(fromEntities);
+        return;
+      }
+      if (clients.length > 0) setClientOptions(clients);
+    });
+  }, [clients]);
+
+  useEffect(() => {
+    if (!documentId || initial) return;
+    let cancelled = false;
+    setLoadingDoc(true);
+    void getDocumentClient(documentId).then((row) => {
+      if (cancelled) return;
+      if (!row || row.kind !== kind) {
+        setMsg("ไม่พบเอกสาร");
+        setLoadingDoc(false);
+        return;
+      }
+      const data = toCommercialFormInitial(row);
+      setSaved(data);
+      setLines(data.lines.length ? data.lines : [emptyLine(1)]);
+      setMeta(data.meta);
+      setClientId(data.clientId ?? "");
+      setIssueDate(data.issueDate);
+      setNotes(data.notes);
+      setAssignNumber(!data.number);
+      setLoadingDoc(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [documentId, initial, kind]);
 
   const isVehicleVatScheme = meta.vatScheme === "MARGIN" || meta.vatScheme === "FULL_SALE";
 
@@ -79,7 +161,7 @@ export function CommercialDocumentForm({
 
   function onClientChange(id: string) {
     setClientId(id);
-    const c = clients.find((x) => x.id === id);
+    const c = clientOptions.find((x) => x.id === id);
     if (!c) return;
     setMeta((m) => ({
       ...m,
@@ -87,6 +169,8 @@ export function CommercialDocumentForm({
       counterpartyTaxId: c.taxId,
       counterpartyAddress: c.address,
       counterpartyPhone: c.phone,
+      counterpartyBranchHeadOffice: c.branchHeadOffice !== false,
+      counterpartyBranchNo: c.branchNo ?? "",
     }));
   }
 
@@ -108,41 +192,44 @@ export function CommercialDocumentForm({
 
   async function submit(assign: boolean) {
     setMsg(null);
-    const fd = new FormData();
-    fd.set("kind", kind);
-    if (initial?.id) fd.set("id", initial.id);
-    fd.set("clientId", clientId);
-    fd.set("issueDate", issueDate);
-    fd.set("notes", notes);
-    fd.set("linesJson", JSON.stringify(lines));
-    fd.set("metaJson", JSON.stringify(meta));
-    fd.set("assignNumber", assign ? "1" : "0");
-    fd.set("issuedByName", profile?.name?.trim() ?? "");
-
     startTransition(async () => {
-      const r = await saveCommercialDocument(fd);
+      const r = await saveCommercialDocumentClient({
+        id: saved?.id || documentId || null,
+        kind,
+        clientId: clientId || null,
+        issueDate,
+        notes,
+        linesJson: JSON.stringify(lines),
+        metaJson: JSON.stringify(meta),
+        assignNumber: assign,
+        issuedByName: profile?.name?.trim() ?? "",
+      });
       if (!r.ok) {
         setMsg(r.message ?? "บันทึกไม่สำเร็จ");
         return;
       }
       const docId = r.id;
       if (assign && docId) {
-        window.open(documentPrintUrl(docId, profile?.name), "_blank", "noopener");
+        await printDocumentClient(docId, profile?.name);
       }
       router.push(`${listHref}/${docId}`);
       router.refresh();
     });
   }
 
+  if (loadingDoc) {
+    return <p className="text-sm text-slate-500">กำลังโหลดเอกสาร…</p>;
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-semibold text-slate-900">
-          {initial?.id ? "แก้ไข" : "สร้าง"}
+          {saved?.id || documentId ? "แก้ไข" : "สร้าง"}
           {route.titleTh}
         </h2>
-        {initial?.number && (
-          <span className="font-mono text-sm text-slate-600">เลขที่ {initial.number}</span>
+        {saved?.number && (
+          <span className="font-mono text-sm text-slate-600">เลขที่ {saved.number}</span>
         )}
       </div>
       {msg && <p className="text-sm text-red-700">{msg}</p>}
@@ -158,7 +245,7 @@ export function CommercialDocumentForm({
               disabled={pending}
             >
               <option value="">— เลือกลูกค้า —</option>
-              {clients.map((c) => (
+              {clientOptions.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
@@ -378,9 +465,9 @@ export function CommercialDocumentForm({
         >
           {pending ? "กำลังบันทึก…" : "บันทึก"}
         </button>
-        {initial?.id && (
+        {(saved?.id || documentId) && (
           <DocumentPrintLink
-            documentId={initial.id}
+            documentId={saved?.id || documentId!}
             className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
           />
         )}

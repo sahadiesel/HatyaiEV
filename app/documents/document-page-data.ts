@@ -1,7 +1,7 @@
 import type { DocumentKind } from "@/lib/documents-firestore-types";
 import { notFound } from "next/navigation";
-import { listClients } from "@/lib/clients-repository";
-import { listContractors } from "@/lib/contractors-repository";
+import { listEntities } from "@/lib/entities-repository";
+import { entityHasRoleGroup } from "@/lib/entity-roles";
 import { getDocument } from "@/lib/documents-repository";
 import {
   defaultCommercialMeta,
@@ -12,26 +12,36 @@ import {
   type WithholdingDocumentMeta,
 } from "@/lib/documents/types";
 
+/** ลูกค้า/ผู้ซื้อ (+ ผู้ว่าจ้าง) จากทะเบียนคู่ค้า */
 export async function loadClientsForDocument() {
-  const rows = await listClients();
-  return rows.map((c) => ({
-    id: c.id,
-    name: c.name,
-    taxId: c.taxId,
-    address: c.address,
-    phone: c.phone,
-  }));
+  const rows = await listEntities();
+  return rows
+    .filter(
+      (e) =>
+        entityHasRoleGroup(e.roles, "CUSTOMER_BUYER") || entityHasRoleGroup(e.roles, "HIRER"),
+    )
+    .map((e) => ({
+      id: e.id,
+      name: e.name,
+      taxId: e.taxId,
+      address: e.address,
+      phone: e.phone,
+      branchHeadOffice: e.branchHeadOffice,
+      branchNo: e.branchNo,
+    }));
 }
 
 export async function loadContractorsForDocument() {
-  const rows = await listContractors();
-  return rows.map((c) => ({
-    id: c.id,
-    name: c.name,
-    taxId: c.taxId,
-    address: c.address,
-    defaultWhtPercent: c.defaultWhtPercent,
-  }));
+  const rows = await listEntities();
+  return rows
+    .filter((e) => entityHasRoleGroup(e.roles, "CONTRACTOR"))
+    .map((e) => ({
+      id: e.id,
+      name: e.name,
+      taxId: e.taxId,
+      address: e.address,
+      defaultWhtPercent: e.defaultWhtPercent,
+    }));
 }
 
 export async function loadCommercialDocument(id: string, kind: DocumentKind) {

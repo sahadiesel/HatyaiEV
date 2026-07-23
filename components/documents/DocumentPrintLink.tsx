@@ -1,7 +1,8 @@
 "use client";
 
 import { useAuth } from "@/components/AuthProvider";
-import { documentPrintUrl } from "@/lib/documents/print-url";
+import { printDocumentClient } from "@/lib/documents-client";
+import { useState, useTransition } from "react";
 
 export function DocumentPrintLink({
   documentId,
@@ -13,11 +14,26 @@ export function DocumentPrintLink({
   label?: string;
 }) {
   const { profile } = useAuth();
-  const href = documentPrintUrl(documentId, profile?.name);
+  const [pending, startTransition] = useTransition();
+  const [err, setErr] = useState<string | null>(null);
 
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" className={className}>
-      {label}
-    </a>
+    <>
+      <button
+        type="button"
+        disabled={pending}
+        className={className}
+        onClick={() => {
+          setErr(null);
+          startTransition(async () => {
+            const r = await printDocumentClient(documentId, profile?.name);
+            if (!r.ok) setErr(r.message);
+          });
+        }}
+      >
+        {pending ? "…" : label}
+      </button>
+      {err && <span className="ml-1 text-xs text-red-600">{err}</span>}
+    </>
   );
 }
