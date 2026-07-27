@@ -74,11 +74,22 @@ firebase login --reauth   # เมื่อ session หมดอายุ
 
 **CI / GitHub Actions**
 
+Workflow `.github/workflows/firebase-deploy.yml` จะ fail ที่ขั้น **Deploy Firestore** ถ้ายังไม่มี secret
+
 ```powershell
-firebase login:ci
+cd D:\HYEV_2
+npx firebase login:ci
 ```
 
-เก็บ token เป็น secret ชื่อ `FIREBASE_TOKEN` ใน repository
+แล้วไปที่ GitHub → repo **HatyaiEV** → **Settings → Secrets and variables → Actions → New repository secret**
+
+| Name | Value |
+|------|--------|
+| `FIREBASE_TOKEN` | token จากคำสั่งด้านบน |
+
+จากนั้น **Actions → Deploy Firebase → Re-run jobs** (หรือ `workflow_dispatch`)
+
+ถ้าเคยตั้งไว้แล้วแต่ยัง fail ให้สร้าง token ใหม่แล้วอัปเดต secret (token หมดอายุ/ถูก revoke ได้)
 
 ## ไฟล์ที่เกี่ยวข้อง
 

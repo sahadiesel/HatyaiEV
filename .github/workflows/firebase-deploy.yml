@@ -32,7 +32,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check FIREBASE_TOKEN secret
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          if [ -z "${FIREBASE_TOKEN}" ]; then
+            echo "::error::Missing repository secret FIREBASE_TOKEN."
+            echo "Create it under Settings → Secrets and variables → Actions:"
+            echo "  1. On your machine: npx firebase login:ci"
+            echo "  2. Paste the token as secret name FIREBASE_TOKEN"
+            echo "  3. Re-run this workflow"
+            exit 1
+          fi
+          echo "FIREBASE_TOKEN is set (length ${#FIREBASE_TOKEN})."
+
       - name: Deploy Firestore
-        run: npx firebase deploy --only firestore --non-interactive
+        run: npx firebase deploy --only firestore --non-interactive --project auto-repair-management
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
