@@ -1,7 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { calcCommercialTotals, calcVehicleSaleVatTotals, calcWithholdingTotals, parseAmount, recalcLineAmount } from "@/lib/documents/calc";
+import {
+  calcCommercialTotals,
+  calcVehicleSaleVatTotals,
+  calcWithholdingTotals,
+  parseAmount,
+  recalcLineAmount,
+  withholdingVatRatePercent,
+} from "@/lib/documents/calc";
 import type { DocumentKind } from "@/lib/documents-firestore-types";
 import {
   assignDocumentNumber as assignDocumentNumberRepo,
@@ -183,10 +190,9 @@ export async function saveWithholdingDocument(formData: FormData) {
   };
   const base = parseAmount(meta.withholdingTaxBase);
   const whtRate = parseAmount(meta.withholdingTaxRatePercent);
-  const vatRate = 7;
   const { subtotal, vatAmount, totalAmount, withholdingAmount } = calcWithholdingTotals({
     base,
-    vatRatePercent: vatRate,
+    vatRatePercent: withholdingVatRatePercent(meta),
     whtRatePercent: whtRate,
   });
   const notes = String(formData.get("notes") ?? "");

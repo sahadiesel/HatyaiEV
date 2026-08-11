@@ -56,7 +56,16 @@ export async function listLegalDocsClient(kind?: LegalDocKind): Promise<LegalDoc
 
 function nextNumber(kind: LegalDocKind, rows: LegalDocRecord[]): string {
   const year = new Date().getFullYear();
-  const prefix = kind === "HIRE_CONTRACT" ? `HW-${year}-` : `VS-${year}-`;
+  const prefixByKind: Partial<Record<LegalDocKind, string>> = {
+    HIRE_CONTRACT: `HW-${year}-`,
+    PURCHASE_CONTRACT: `PC-${year}-`,
+    SALE_CONTRACT: `SC-${year}-`,
+    VEHICLE_SALE_CONTRACT: `VS-${year}-`,
+    VEHICLE_RECEIVING: `VR-${year}-`,
+    REPAIR_CONTRACT: `RP-${year}-`,
+    OUTSOURCE_REPAIR_CONTRACT: `OR-${year}-`,
+  };
+  const prefix = prefixByKind[kind] || `DOC-${year}-`;
   let max = 0;
   for (const r of rows) {
     if (!r.number?.startsWith(prefix)) continue;

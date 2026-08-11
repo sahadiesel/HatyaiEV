@@ -43,8 +43,29 @@ export type VehicleCostLine = {
   category: VehicleCostCategory;
   description: string;
   amount: string;
+  /** คู่ค้าที่จ่ายให้ (ผู้รับจ้าง / ซัพพลายเออร์) */
+  entityId?: string | null;
+  /** เลขที่บิลสินค้า (อะไหล่) */
+  billNo?: string | null;
   /** อ้างอิงใบสำคัญจ่าย / เอกสาร (ถ้ามี) */
   documentId?: string | null;
+  withholdingDocumentId?: string | null;
+  paymentVoucherDocumentId?: string | null;
+  cashbookEntryId?: string | null;
+  createdAt?: string;
+};
+
+/** งวดจ่ายค่าซื้อรถ — แยกจากมูลค่าสัญญา (ตัด cashbook ตามยอดจ่ายจริง) */
+export type VehiclePurchasePayment = {
+  id: string;
+  date: string;
+  amount: string;
+  /** เลขที่ใบเสร็จ/ใบกำกับจากผู้ขาย */
+  billNo?: string | null;
+  paymentVoucherDocumentId?: string | null;
+  paymentVoucherDocumentNumber?: string | null;
+  cashbookEntryId?: string | null;
+  notes?: string;
   createdAt?: string;
 };
 
@@ -65,12 +86,15 @@ export type VehicleRecord = {
   /** ผู้ขายที่ซื้อเข้า (entity) */
   sellerEntityId: string | null;
   purchaseDate: string;
+  /** มูลค่าซื้อ/ต้นทุนรถ (ไม่ใช่ยอดตัดเงินสด) */
   purchasePrice: string;
   /**
    * ราคาเต็มในสัญญาซื้อเข้า (ล็อกเป็นฐานคำนวณ Margin ป.111)
-   * ถ้าว่าง ใช้ purchasePrice
+   * ถ้าว่าง ใช้ purchasePrice — ใช้เป็นยอดที่ต้องจ่ายทั้งหมด
    */
   purchaseContractAmount: string;
+  /** ประวัติจ่ายค่าซื้อรถ (งวดย่อย) */
+  purchasePayments: VehiclePurchasePayment[];
   /** ราคาเต็มในสัญญาขายออก */
   saleContractAmount: string;
   /** ต้นทุนสะสม (อะไหล่/ค่าแรง) */
@@ -161,6 +185,7 @@ export type CashbookEntryType =
   | "VEHICLE_PURCHASE"
   | "VEHICLE_SALE"
   | "PARTS"
+  | "LABOR"
   | "MISC"
   | "PURCHASE_DEPOSIT"
   | "SALE_DEPOSIT";
@@ -176,6 +201,14 @@ export type CashbookEntry = {
   documentId: string | null;
   documentKind: string | null;
   documentNumber: string | null;
+  /** เอกสารหัก ณ ที่จ่ายที่ผูกกับรายจ่ายนี้ */
+  withholdingDocumentId?: string | null;
+  withholdingDocumentNumber?: string | null;
+  /** ใบสำคัญจ่ายที่ผูกกับรายจ่ายนี้ */
+  paymentVoucherDocumentId?: string | null;
+  paymentVoucherDocumentNumber?: string | null;
+  /** เลขที่บิลสินค้า */
+  billNo?: string | null;
   vehicleId: string | null;
   entityId: string | null;
   channel: CashChannel;

@@ -24,7 +24,7 @@ export function calcCommercialTotals(lines: DocumentLineItem[], vatRatePercent =
   return { subtotal, vatAmount, totalAmount };
 }
 
-/** หัก ณ ที่จ่ายจากฐานก่อน VAT (แนว OPEC) */
+/** หัก ณ ที่จ่ายจากฐานก่อน VAT (แนว OPEC) — บุคคลธรรมดาใช้ vatRatePercent = 0 */
 export function calcWithholdingTotals(opts: {
   base: number;
   vatRatePercent: number;
@@ -35,6 +35,24 @@ export function calcWithholdingTotals(opts: {
   const totalAmount = roundMoney2(subtotal + vatAmount);
   const withholdingAmount = roundMoney2((subtotal * opts.whtRatePercent) / 100);
   return { subtotal, vatAmount, totalAmount, withholdingAmount };
+}
+
+/** บุคคลธรรมดาไม่มี VAT 7% — เฉพาะบริษัทจด VAT */
+export function withholdingVatRatePercent(meta: {
+  payeeEntityKind?: "INDIVIDUAL" | "COMPANY";
+  vatRatePercent?: string;
+}): number {
+  if (meta.payeeEntityKind === "INDIVIDUAL") return 0;
+  if (meta.payeeEntityKind === "COMPANY") {
+    const n = Number(String(meta.vatRatePercent ?? "7").replace(/,/g, ""));
+    return Number.isFinite(n) ? n : 7;
+  }
+  if (meta.vatRatePercent != null && meta.vatRatePercent !== "") {
+    const n = Number(String(meta.vatRatePercent).replace(/,/g, ""));
+    if (Number.isFinite(n)) return n;
+  }
+  // ค่าเริ่มต้น: ไม่คิด VAT (ส่วนใหญ่เป็นค่าแรงบุคคล)
+  return 0;
 }
 
 /**

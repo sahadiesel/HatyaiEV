@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { BrandModelSelect } from "@/components/vehicles/BrandModelSelect";
 import { listEntitiesClient } from "@/lib/entities-client";
@@ -51,7 +52,12 @@ const DEFAULT_IMPROVEMENTS = [
   "แก้ไขสนิมโครงรถ",
 ];
 
-export function VehicleSaleContractForm() {
+export function VehicleSaleContractForm({
+  initialVehicleId = "",
+}: {
+  initialVehicleId?: string;
+}) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [entities, setEntities] = useState<EntityRecord[]>([]);
   const [vehicles, setVehicles] = useState<VehicleRecord[]>([]);
@@ -61,7 +67,7 @@ export function VehicleSaleContractForm() {
 
   const [hyevRole, setHyevRole] = useState<"SELLER" | "BUYER">("SELLER");
   const [party, setParty] = useState<ContractPartySnapshot>(emptyParty());
-  const [vehicleId, setVehicleId] = useState("");
+  const [vehicleId, setVehicleId] = useState(initialVehicleId);
   const [issueDate, setIssueDate] = useState(new Date().toISOString().slice(0, 10));
   const [issuePlace, setIssuePlace] = useState("บริษัท หาดใหญ่ อี วี จำกัด");
   const [vehicleCondition, setVehicleCondition] = useState("มือสอง");
@@ -92,8 +98,33 @@ export function VehicleSaleContractForm() {
       setIssuePlace(brandCo.companyName || "บริษัท หาดใหญ่ อี วี จำกัด");
       setBankAccountName(brandCo.companyName || "บริษัท หาดใหญ่ อี วี จำกัด");
       setDeliveryPlace(brandCo.address || "");
+      const pickId = initialVehicleId || vehicleId;
+      if (pickId) {
+        const v = vehs.find((x) => x.id === pickId);
+        if (v) {
+          setVehicleId(v.id);
+          setBrand(v.brand);
+          setModel(v.model);
+          setLicensePlate(v.licensePlate);
+          setVin(v.vin);
+          const sale =
+            parseAmount(v.saleContractAmount) > 0
+              ? v.saleContractAmount
+              : parseAmount(v.expectedSalePrice) > 0
+                ? v.expectedSalePrice
+                : parseAmount(v.soldPrice) > 0
+                  ? v.soldPrice
+                  : "";
+          if (sale) setAmount(sale);
+          if (v.buyerEntityId) {
+            const buyer = ents.find((e) => e.id === v.buyerEntityId);
+            if (buyer) setParty(fromEntity(buyer));
+          }
+        }
+      }
     })();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialVehicleId]);
 
   const selectableVehicles = useMemo(
     () => vehicles.filter((v) => v.status === "IN_STOCK" || v.status === "RESERVED" || v.status === "SOLD"),
@@ -170,7 +201,7 @@ export function VehicleSaleContractForm() {
     if (!party.name.trim()) return "กรอกหรือเลือกคู่สัญญา";
     if (!party.idOrTaxNo.trim()) return "กรอกเลขบัตรประชาชน / ทะเบียนการค้า ของคู่สัญญา";
     if (!party.phone.trim()) return "กรอกเบอร์โทรติดต่อของคู่สัญญา";
-    if (parseAmount(amount) <= 0) return "กรอกราคาซื้อขาย";
+    if (parseAmount(amount) <= 0) return "กรอกราคาขาย";
     return null;
   }
 
@@ -189,7 +220,7 @@ export function VehicleSaleContractForm() {
     });
   }
 
-  function onSaveAndPrint() {
+  function onSave() {
     const err = validate();
     if (err) {
       setMsgOk(false);
@@ -269,19 +300,16 @@ export function VehicleSaleContractForm() {
         });
       }
 
-      const html = await buildHtml();
-      openPrintHtml(html);
       setMsgOk(true);
-      setMsg(
-        `บันทึกแล้ว (${res.number}) · ล็อกราคาขาย · ลงมัดจำ ฿${formatBaht(depositAmt)} ในบัญชีธนาคาร`,
-      );
+      setMsg(`บันทึกแล้ว (${res.number}) — กลับไปหน้ารายการ`);
+      router.push("/documents/vehicle-sale");
     });
   }
 
   return (
     <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-lg font-semibold text-slate-900">สัญญาซื้อขายรถยนต์</h2>
+        <h2 className="text-lg font-semibold text-slate-900">สัญญาขาย</h2>
         <Link href="/documents/vehicle-sale" className="text-sm text-blue-800 hover:underline">
           ← รายการ
         </Link>
@@ -417,7 +445,7 @@ export function VehicleSaleContractForm() {
         </label>
 
         <label className="text-sm">
-          <span className="mb-1 block text-slate-600">ราคาซื้อขาย (บาท) *</span>
+          <span className="mb-1 block text-slate-600">ราคาขาย (บาท) *</span>
           <input className={inp} value={amount} onChange={(e) => setAmount(e.target.value)} required />
         </label>
         <label className="text-sm">
@@ -501,10 +529,10 @@ export function VehicleSaleContractForm() {
         <button
           type="button"
           disabled={pending}
-          onClick={onSaveAndPrint}
+          onClick={onSave}
           className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
         >
-          {pending ? "กำลังสร้าง…" : "บันทึกและพิมพ์สัญญา"}
+          {pending ? "กำลังบันทึก…" : "บันทึก"}
         </button>
         <button
           type="button"
@@ -512,9 +540,18 @@ export function VehicleSaleContractForm() {
           onClick={onPrint}
           className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50"
         >
-          พิมพ์อย่างเดียว
+          พิมพ์
         </button>
+        <Link
+          href="/documents/vehicle-sale"
+          className="rounded-md border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50"
+        >
+          ยกเลิก
+        </Link>
       </div>
+      <p className="text-xs text-slate-500">
+        หลังบันทึก สัญญาจะอยู่ในหน้ารายการ — ใช้ปุ่ม แก้ไข / พิมพ์ ท้ายแถวได้
+      </p>
     </div>
   );
 }

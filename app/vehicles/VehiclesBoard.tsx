@@ -1,27 +1,81 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { useAuth } from "@/components/AuthProvider";
 import type { VehicleRecord } from "@/lib/domain-types";
+import { deleteVehicleClient, listVehiclesClient } from "@/lib/vehicles-client";
 import {
   COST_CATEGORY_LABELS,
   formatBaht,
   PURCHASE_TYPE_LABELS,
+  calcPurchasePaymentSummary,
   summarizeVehicleEconomics,
   VEHICLE_STATUS_LABELS,
 } from "@/lib/vehicles/calc";
 
 export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
+  const { isAdmin } = useAuth();
+  const [pending, startTransition] = useTransition();
   const [view, setView] = useState<"cards" | "table">("cards");
   const [statusFilter, setStatusFilter] = useState<string>("ACTIVE");
+  const [rowsAll, setRowsAll] = useState<VehicleRecord[]>(vehicles);
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  function reload() {
+    setLoading(true);
+    void listVehiclesClient().then((rows) => {
+      setRowsAll(rows.length > 0 ? rows : vehicles);
+      setLoading(false);
+    });
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    void listVehiclesClient().then((rows) => {
+      if (cancelled) return;
+      if (rows.length > 0) setRowsAll(rows);
+      else if (vehicles.length > 0) setRowsAll(vehicles);
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [vehicles]);
 
   const rows = useMemo(() => {
-    return vehicles.filter((v) => {
+    return rowsAll.filter((v) => {
       if (statusFilter === "ALL") return true;
       if (statusFilter === "ACTIVE") return v.status === "IN_STOCK" || v.status === "RESERVED";
       return v.status === statusFilter;
     });
-  }, [vehicles, statusFilter]);
+  }, [rowsAll, statusFilter]);
+
+  function onDelete(v: VehicleRecord) {
+    const label = `${v.brand} ${v.model} (${v.licensePlate || v.code || v.id})`;
+    if (
+      !confirm(
+        `ลบรถ ${label} ออกจากสต็อก?\nรายการสมุดเงินสดที่ผูกกับรถคันนี้จะถูกลบด้วย\nการกระทำนี้ย้อนกลับไม่ได้`,
+      )
+    ) {
+      return;
+    }
+    startTransition(async () => {
+      const res = await deleteVehicleClient(v.id);
+      if (!res.ok) {
+        setMsg(res.message);
+        return;
+      }
+      setMsg(
+        res.deletedCashbook > 0
+          ? `ลบรถแล้ว และลบรายการเงินสดที่เกี่ยวข้อง ${res.deletedCashbook} รายการ`
+          : "ลบรถออกจากสต็อกแล้ว",
+      );
+      reload();
+    });
+  }
 
   return (
     <div className="space-y-6">
@@ -39,6 +93,14 @@ export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
           + รับรถเข้าสต็อก
         </Link>
       </div>
+
+      {msg && (
+        <p className="rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-800">{msg}</p>
+      )}
+
+      {loading && rowsAll.length === 0 ? (
+        <p className="text-sm text-slate-500">กำลังโหลดรายการรถ…</p>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         {(
@@ -90,14 +152,14 @@ export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {rows.map((v) => {
             const eco = summarizeVehicleEconomics(v);
+            const pay = calcPurchasePaymentSummary(v);
             return (
-              <Link
+              <div
                 key={v.id}
-                href={`/vehicles/${v.id}`}
-                className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-400"
+                className="relative rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-400"
               >
                 <div className="flex items-start justify-between gap-2">
-                  <div>
+                  <Link href={`/vehicles/${v.id}`} className="min-w-0 flex-1 hover:opacity-90">
                     <p className="font-mono text-xs text-slate-500">{v.code}</p>
                     <h3 className="text-lg font-semibold text-slate-900">
                       {v.brand} {v.model}
@@ -105,50 +167,74 @@ export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
                     <p className="text-sm text-slate-600">
                       {v.licensePlate || "—"} · {v.year || "—"} · {v.color || "—"}
                     </p>
+                  </Link>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
+                      {VEHICLE_STATUS_LABELS[v.status] ?? v.status}
+                    </span>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() => onDelete(v)}
+                        className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
+                      >
+                        ลบ
+                      </button>
+                    )}
                   </div>
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
-                    {VEHICLE_STATUS_LABELS[v.status] ?? v.status}
-                  </span>
                 </div>
 
-                <div className="mt-4 rounded-md bg-slate-50 p-3">
-                  <p className="text-xs text-slate-500">ต้นทุนรวมปัจจุบัน</p>
-                  <p className="text-2xl font-bold tabular-nums text-slate-900">
-                    ฿{formatBaht(eco.totalCost)}
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    ซื้อ {formatBaht(Number(v.purchasePrice) || 0)} + สะสม{" "}
-                    {formatBaht(eco.totalCost - (Number(v.purchasePrice) || 0))} (
-                    {v.costLines.length} รายการ)
-                  </p>
-                </div>
-
-                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                  <div>
-                    <p className="text-xs text-slate-500">ราคาตั้งขาย</p>
-                    <p className="font-medium tabular-nums">฿{formatBaht(eco.expectedSale)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-500">กำไรขั้นต้นประมาณ</p>
-                    <p
-                      className={
-                        eco.grossProfit >= 0
-                          ? "font-medium tabular-nums text-emerald-700"
-                          : "font-medium tabular-nums text-red-600"
-                      }
-                    >
-                      ฿{formatBaht(eco.grossProfit)}
+                <Link href={`/vehicles/${v.id}`} className="mt-4 block">
+                  <div className="rounded-md bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">ต้นทุนรวมปัจจุบัน</p>
+                    <p className="text-2xl font-bold tabular-nums text-slate-900">
+                      ฿{formatBaht(eco.totalCost)}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      ซื้อ {formatBaht(Number(v.purchasePrice) || 0)} + สะสม{" "}
+                      {formatBaht(eco.totalCost - (Number(v.purchasePrice) || 0))} (
+                      {v.costLines.length} รายการ)
                     </p>
                   </div>
-                </div>
 
-                <p className="mt-3 text-xs text-slate-500">
-                  {PURCHASE_TYPE_LABELS[v.purchaseType]}
-                  {eco.saleVat && (
-                    <> · VAT ประมาณ ฿{formatBaht(eco.saleVat.vatAmount)} ({eco.saleVat.scheme})</>
-                  )}
-                </p>
-              </Link>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                    <div>
+                      <p className="text-xs text-slate-500">ราคาตั้งขาย</p>
+                      <p className="font-medium tabular-nums">฿{formatBaht(eco.expectedSale)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">กำไรขั้นต้นประมาณ</p>
+                      <p
+                        className={
+                          eco.grossProfit >= 0
+                            ? "font-medium tabular-nums text-emerald-700"
+                            : "font-medium tabular-nums text-red-600"
+                        }
+                      >
+                        ฿{formatBaht(eco.grossProfit)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <p className="mt-3 text-xs text-slate-500">
+                    {PURCHASE_TYPE_LABELS[v.purchaseType]}
+                    {eco.saleVat && (
+                      <> · VAT ประมาณ ฿{formatBaht(eco.saleVat.vatAmount)} ({eco.saleVat.scheme})</>
+                    )}
+                  </p>
+                  <p
+                    className={
+                      pay.remaining > 0
+                        ? "mt-2 text-xs font-medium text-amber-800"
+                        : "mt-2 text-xs text-emerald-700"
+                    }
+                  >
+                    จ่ายค่าซื้อ ฿{formatBaht(pay.paid)} / ฿{formatBaht(pay.obligation)}
+                    {pay.remaining > 0 ? ` · คงค้าง ฿${formatBaht(pay.remaining)}` : " · ครบแล้ว"}
+                  </p>
+                </Link>
+              </div>
             );
           })}
         </div>
@@ -166,6 +252,7 @@ export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
                 <th className="px-3 py-2 text-right">คอม</th>
                 <th className="px-3 py-2 text-right">กำไรประมาณ</th>
                 <th className="px-3 py-2">สถานะ</th>
+                {isAdmin && <th className="px-3 py-2" />}
               </tr>
             </thead>
             <tbody>
@@ -189,6 +276,18 @@ export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
                     <td className="px-3 py-2 text-right tabular-nums">{formatBaht(eco.commission)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{formatBaht(eco.grossProfit)}</td>
                     <td className="px-3 py-2">{VEHICLE_STATUS_LABELS[v.status]}</td>
+                    {isAdmin && (
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          type="button"
+                          disabled={pending}
+                          onClick={() => onDelete(v)}
+                          className="text-red-600 hover:underline disabled:opacity-50"
+                        >
+                          ลบ
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -199,6 +298,7 @@ export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
 
       <p className="text-xs text-slate-400">
         หมวดต้นทุน: {Object.values(COST_CATEGORY_LABELS).join(" · ")}
+        {isAdmin ? " · ผู้ดูแลระบบสามารถลบรถทดสอบได้" : ""}
       </p>
     </div>
   );

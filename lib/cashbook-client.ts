@@ -31,13 +31,48 @@ function newId(): string {
   return `c${Date.now().toString(36)}`;
 }
 
+/** แปลงวันที่จาก Firestore / string ให้เป็น YYYY-MM-DD */
+function normalizeEntryDate(raw: unknown): string {
+  if (!raw) return "";
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    // DD/MM/YYYY หรือ DD-MM-YYYY
+    const m = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/);
+    if (m) {
+      return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+    }
+    const d = new Date(s);
+    if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+    return s.slice(0, 10);
+  }
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+    return raw.toISOString().slice(0, 10);
+  }
+  if (typeof raw === "object" && raw !== null && "toDate" in raw) {
+    try {
+      const d = (raw as { toDate: () => Date }).toDate();
+      if (d instanceof Date && !Number.isNaN(d.getTime())) {
+        return d.toISOString().slice(0, 10);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  if (typeof raw === "object" && raw !== null && "seconds" in raw) {
+    const sec = Number((raw as { seconds: number }).seconds);
+    if (Number.isFinite(sec)) return new Date(sec * 1000).toISOString().slice(0, 10);
+  }
+  return String(raw).slice(0, 10);
+}
+
 export function parseCashbookEntryClient(id: string, d: Record<string, unknown>): CashbookEntry {
   const channel: CashChannel =
     d.channel === "BANK" || d.bankAccountId ? "BANK" : "CASH";
   return {
     id,
     entryNo: String(d.entryNo ?? ""),
-    entryDate: String(d.entryDate ?? ""),
+    entryDate: normalizeEntryDate(d.entryDate),
     direction: (d.direction as CashDirection) || "OUT",
     entryType: (d.entryType as CashbookEntryType) || "MANUAL",
     amount: String(d.amount ?? "0"),
@@ -45,6 +80,17 @@ export function parseCashbookEntryClient(id: string, d: Record<string, unknown>)
     documentId: d.documentId ? String(d.documentId) : null,
     documentKind: d.documentKind ? String(d.documentKind) : null,
     documentNumber: d.documentNumber ? String(d.documentNumber) : null,
+    withholdingDocumentId: d.withholdingDocumentId ? String(d.withholdingDocumentId) : null,
+    withholdingDocumentNumber: d.withholdingDocumentNumber
+      ? String(d.withholdingDocumentNumber)
+      : null,
+    paymentVoucherDocumentId: d.paymentVoucherDocumentId
+      ? String(d.paymentVoucherDocumentId)
+      : null,
+    paymentVoucherDocumentNumber: d.paymentVoucherDocumentNumber
+      ? String(d.paymentVoucherDocumentNumber)
+      : null,
+    billNo: d.billNo ? String(d.billNo) : null,
     vehicleId: d.vehicleId ? String(d.vehicleId) : null,
     entityId: d.entityId ? String(d.entityId) : null,
     channel,
@@ -90,6 +136,11 @@ export type PostCashbookClientInput = {
   documentId?: string | null;
   documentKind?: string | null;
   documentNumber?: string | null;
+  withholdingDocumentId?: string | null;
+  withholdingDocumentNumber?: string | null;
+  paymentVoucherDocumentId?: string | null;
+  paymentVoucherDocumentNumber?: string | null;
+  billNo?: string | null;
   createdByName?: string;
 };
 
@@ -133,6 +184,11 @@ export async function postCashbookEntryClient(
       documentId: input.documentId ?? null,
       documentKind: input.documentKind ?? null,
       documentNumber: input.documentNumber ?? null,
+      withholdingDocumentId: input.withholdingDocumentId ?? null,
+      withholdingDocumentNumber: input.withholdingDocumentNumber ?? null,
+      paymentVoucherDocumentId: input.paymentVoucherDocumentId ?? null,
+      paymentVoucherDocumentNumber: input.paymentVoucherDocumentNumber ?? null,
+      billNo: input.billNo?.trim() ? String(input.billNo).trim() : null,
       vehicleId: input.vehicleId ?? null,
       entityId: input.entityId ?? null,
       channel,

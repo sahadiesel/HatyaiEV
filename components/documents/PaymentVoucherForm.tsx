@@ -2,22 +2,42 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { DocumentPrintLink } from "@/components/documents/DocumentPrintLink";
-import { savePaymentVoucherClient } from "@/lib/documents-client";
+import { parseAmount } from "@/lib/documents/calc";
+import {
+  enrichPaymentVoucherMetaFromWhtDoc,
+  extractWhtDocNumber,
+  resolvePaymentVoucherWht,
+} from "@/lib/documents/payment-voucher-wht";
+import {
+  getDocumentClient,
+  listDocumentsClient,
+  savePaymentVoucherClient,
+} from "@/lib/documents-client";
 import { listEntitiesClient } from "@/lib/entities-client";
-import { defaultPaymentVoucherMeta, type PaymentVoucherMeta } from "@/lib/documents/types";
+import {
+  defaultPaymentVoucherMeta,
+  parseMetaJson,
+  type PaymentVoucherMeta,
+} from "@/lib/documents/types";
 import type { EntityRecord } from "@/lib/domain-types";
 
 const inp =
   "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
 
+function fmt(n: number): string {
+  return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 export function PaymentVoucherForm({
   entities,
   initial,
+  documentId,
 }: {
   entities: EntityRecord[];
+  documentId?: string;
   initial?: {
     id: string;
     number: string;
@@ -30,6 +50,8 @@ export function PaymentVoucherForm({
   const { profile } = useAuth();
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [loadingDoc, setLoadingDoc] = useState(Boolean(documentId && !initial));
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [meta, setMeta] = useState<PaymentVoucherMeta>(initial?.meta ?? defaultPaymentVoucherMeta());
   const [amount, setAmount] = useState(initial?.totalAmount ?? "0");
@@ -37,8 +59,8 @@ export function PaymentVoucherForm({
     initial?.issueDate ?? new Date().toISOString().slice(0, 10),
   );
   const [notes, setNotes] = useState(initial?.notes ?? "");
-  const [assignNumber, setAssignNumber] = useState(!initial?.id);
-  const [savedId, setSavedId] = useState(initial?.id ?? "");
+  const [assignNumber, setAssignNumber] = useState(!initial?.id && !documentId);
+  const [savedId, setSavedId] = useState(initial?.id ?? documentId ?? "");
   const [savedNumber, setSavedNumber] = useState(initial?.number ?? "");
   const [entityOptions, setEntityOptions] = useState(entities);
 
@@ -48,6 +70,46 @@ export function PaymentVoucherForm({
       else if (entities.length > 0) setEntityOptions(entities);
     });
   }, [entities]);
+
+  useEffect(() => {
+    if (!documentId || initial) return;
+    let cancelled = false;
+    setLoadingDoc(true);
+    void (async () => {
+      const row = await getDocumentClient(documentId);
+      if (cancelled) return;
+      if (!row || row.kind !== "PAYMENT_VOUCHER") {
+        setLoadError("ไม่พบใบสำคัญจ่ายนี้");
+        setLoadingDoc(false);
+        return;
+      }
+      let m = parseMetaJson<PaymentVoucherMeta>(row.metaJson, defaultPaymentVoucherMeta());
+      const noteText = row.notes || "";
+      const whtNo = extractWhtDocNumber(m, noteText);
+      if (whtNo && parseAmount(m.withholdingAmount ?? "") <= 0) {
+        const whtRows = await listDocumentsClient("WITHHOLDING_TAX");
+        const whtDoc = whtRows.find((d) => d.number === whtNo) || null;
+        m = enrichPaymentVoucherMetaFromWhtDoc(m, noteText, whtDoc);
+      } else if (whtNo && !m.withholdingDocumentNumber) {
+        m = { ...m, withholdingDocumentNumber: whtNo };
+      }
+      setMeta(m);
+      setAmount(String(row.totalAmount || "0"));
+      setIssueDate(row.issueDate.toISOString().slice(0, 10));
+      setNotes(noteText);
+      setSavedId(row.id);
+      setSavedNumber(row.number || "");
+      setAssignNumber(!row.number);
+      setLoadingDoc(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [documentId, initial]);
+
+  const wht = useMemo(() => resolvePaymentVoucherWht(meta, notes), [meta, notes]);
+  const payAmount = parseAmount(amount);
+  const netPay = wht.whtAmt > 0 ? Math.max(0, payAmount - wht.whtAmt) : payAmount;
 
   function onEntity(id: string) {
     const e = entityOptions.find((x) => x.id === id);
@@ -63,6 +125,7 @@ export function PaymentVoucherForm({
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const wasEdit = Boolean(savedId);
     startTransition(async () => {
       const res = await savePaymentVoucherClient({
         id: savedId || null,
@@ -72,7 +135,7 @@ export function PaymentVoucherForm({
         metaJson: JSON.stringify({ ...meta, issuedByName: profile?.name ?? "" }),
         issuedByName: profile?.name ?? "",
         assignNumber,
-        postCashbook: true,
+        postCashbook: !wasEdit,
       });
       if (!res.ok) {
         setMsg(res.message);
@@ -80,15 +143,42 @@ export function PaymentVoucherForm({
       }
       setSavedId(res.id);
       if (res.number) setSavedNumber(res.number);
-      setMsg("บันทึกใบสำคัญจ่ายแล้ว — ลงสมุดเงินสดอัตโนมัติ");
+      // รีโหลด meta หลังบันทึก (กรณีระบบเติมยอดหักอัตโนมัติ)
+      const fresh = await getDocumentClient(res.id);
+      if (fresh) {
+        setMeta(parseMetaJson<PaymentVoucherMeta>(fresh.metaJson, defaultPaymentVoucherMeta()));
+      }
+      setMsg(
+        wasEdit
+          ? "บันทึกการแก้ไขแล้ว (ไม่ลง cashbook ซ้ำ)"
+          : "บันทึกใบสำคัญจ่ายแล้ว — ลงสมุดเงินสดอัตโนมัติ",
+      );
       router.refresh();
     });
+  }
+
+  if (loadingDoc) {
+    return <p className="text-sm text-slate-600">กำลังโหลดใบสำคัญจ่าย…</p>;
+  }
+
+  if (loadError) {
+    return (
+      <div className="space-y-3 rounded-lg border border-red-200 bg-red-50 p-6 text-sm text-red-800">
+        <p>{loadError}</p>
+        <Link href="/documents/payment-voucher" className="text-sm text-blue-800 hover:underline">
+          ← กลับรายการ
+        </Link>
+      </div>
+    );
   }
 
   return (
     <form onSubmit={onSubmit} className="space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-slate-900">ใบสำคัญจ่าย (Payment Voucher)</h2>
+        <h2 className="text-lg font-semibold text-slate-900">
+          {savedId ? "แก้ไขใบสำคัญจ่าย" : "ใบสำคัญจ่าย"} (Payment Voucher)
+          {savedNumber ? ` · ${savedNumber}` : ""}
+        </h2>
         <Link href="/documents/payment-voucher" className="text-sm text-blue-800 hover:underline">
           ← รายการ
         </Link>
@@ -166,6 +256,80 @@ export function PaymentVoucherForm({
         </label>
       </div>
 
+      {wht.hasWht && (
+        <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50/80 p-4">
+          <h3 className="text-sm font-semibold text-amber-950">รายละเอียดหักภาษี ณ ที่จ่าย</h3>
+          <p className="text-xs text-amber-900">
+            ดึงอัตโนมัติจากใบหัก ณ ที่จ่ายที่อ้างอิง — แก้ไขได้ถ้าต้องการ
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-sm">
+              <span className="mb-1 block text-slate-600">เลขที่หนังสือรับรอง</span>
+              <input
+                className={inp}
+                value={meta.withholdingDocumentNumber || ""}
+                onChange={(e) =>
+                  setMeta((m) => ({ ...m, withholdingDocumentNumber: e.target.value }))
+                }
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-slate-600">อัตราหัก (%)</span>
+              <input
+                className={inp}
+                value={meta.withholdingTaxRatePercent || ""}
+                onChange={(e) =>
+                  setMeta((m) => ({ ...m, withholdingTaxRatePercent: e.target.value }))
+                }
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-slate-600">มูลค่าฐานหัก</span>
+              <input
+                className={inp}
+                value={meta.withholdingTaxBase || ""}
+                onChange={(e) => setMeta((m) => ({ ...m, withholdingTaxBase: e.target.value }))}
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-slate-600">ยอดหัก ณ ที่จ่าย</span>
+              <input
+                className={inp}
+                value={meta.withholdingAmount || ""}
+                onChange={(e) => setMeta((m) => ({ ...m, withholdingAmount: e.target.value }))}
+              />
+            </label>
+          </div>
+          <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm text-slate-800 sm:grid-cols-4">
+            <div>
+              <dt className="text-xs text-slate-500">ยอดจ่ายก่อนหัก</dt>
+              <dd className="tabular-nums font-medium">{fmt(payAmount)}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-slate-500">หัก ณ ที่จ่าย</dt>
+              <dd className="tabular-nums font-medium text-amber-800">{fmt(wht.whtAmt)}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-slate-500">จ่ายสุทธิ</dt>
+              <dd className="tabular-nums font-semibold">{fmt(netPay)}</dd>
+            </div>
+            {wht.whtNo ? (
+              <div>
+                <dt className="text-xs text-slate-500">อ้างอิง</dt>
+                <dd>
+                  <Link
+                    href="/documents/withholding"
+                    className="font-mono text-xs text-blue-800 hover:underline"
+                  >
+                    {wht.whtNo}
+                  </Link>
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        </div>
+      )}
+
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={assignNumber} onChange={(e) => setAssignNumber(e.target.checked)} />
         ออกเลขที่เอกสารเมื่อบันทึก
@@ -182,7 +346,7 @@ export function PaymentVoucherForm({
           disabled={pending}
           className="rounded-md bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-50"
         >
-          {pending ? "กำลังบันทึก…" : "บันทึก + ลงสมุดเงินสด"}
+          {pending ? "กำลังบันทึก…" : savedId ? "บันทึก" : "บันทึก + ลงสมุดเงินสด"}
         </button>
         {savedId && savedNumber && (
           <DocumentPrintLink documentId={savedId} label="พิมพ์ PDF" />

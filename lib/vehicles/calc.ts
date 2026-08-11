@@ -1,5 +1,10 @@
 import { parseAmount, roundMoney2 } from "@/lib/documents/calc";
-import type { VehicleCostLine, VehiclePurchaseType, VehicleRecord } from "@/lib/domain-types";
+import type {
+  VehicleCostLine,
+  VehiclePurchasePayment,
+  VehiclePurchaseType,
+  VehicleRecord,
+} from "@/lib/domain-types";
 
 /** รวมต้นทุนสะสมจากรายการอะไหล่/ซ่อม */
 export function sumCostLines(lines: VehicleCostLine[]): number {
@@ -123,4 +128,26 @@ export const COST_CATEGORY_LABELS: Record<string, string> = {
 
 export function formatBaht(n: number): string {
   return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** ยอดที่ต้องจ่ายตามสัญญา (สัญญาซื้อ หรือราคาซื้อ) */
+export function calcPurchaseObligation(
+  vehicle: Pick<VehicleRecord, "purchasePrice" | "purchaseContractAmount">,
+): number {
+  const contract = parseAmount(vehicle.purchaseContractAmount);
+  if (contract > 0) return roundMoney2(contract);
+  return roundMoney2(parseAmount(vehicle.purchasePrice));
+}
+
+export function sumPurchasePayments(payments: VehiclePurchasePayment[] | undefined): number {
+  return roundMoney2((payments ?? []).reduce((s, p) => s + parseAmount(p.amount), 0));
+}
+
+export function calcPurchasePaymentSummary(
+  vehicle: Pick<VehicleRecord, "purchasePrice" | "purchaseContractAmount" | "purchasePayments">,
+) {
+  const obligation = calcPurchaseObligation(vehicle);
+  const paid = sumPurchasePayments(vehicle.purchasePayments);
+  const remaining = roundMoney2(Math.max(0, obligation - paid));
+  return { obligation, paid, remaining };
 }

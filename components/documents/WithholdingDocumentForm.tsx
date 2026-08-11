@@ -5,7 +5,11 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { DocumentPrintLink } from "@/components/documents/DocumentPrintLink";
 import { useAuth } from "@/components/AuthProvider";
-import { calcWithholdingTotals, parseAmount } from "@/lib/documents/calc";
+import {
+  calcWithholdingTotals,
+  parseAmount,
+  withholdingVatRatePercent,
+} from "@/lib/documents/calc";
 import {
   getDocumentClient,
   printDocumentClient,
@@ -28,6 +32,9 @@ export type ContractorOption = {
   taxId: string;
   address: string;
   defaultWhtPercent: string;
+  entityKind?: "INDIVIDUAL" | "COMPANY";
+  branchHeadOffice?: boolean;
+  branchNo?: string;
 };
 
 const WHT_RATES = ["1", "2", "3", "5"] as const;
@@ -75,6 +82,9 @@ export function WithholdingDocumentForm({
           taxId: e.taxId,
           address: e.address,
           defaultWhtPercent: e.defaultWhtPercent || "3",
+          entityKind: e.entityKind,
+          branchHeadOffice: e.branchHeadOffice,
+          branchNo: e.branchNo,
         }))
         .sort((a, b) => a.name.localeCompare(b.name, "th"));
       if (rows.length > 0) setContractorOptions(rows);
@@ -102,18 +112,27 @@ export function WithholdingDocumentForm({
   const totals = useMemo(() => {
     const base = parseAmount(meta.withholdingTaxBase);
     const whtRate = parseAmount(meta.withholdingTaxRatePercent);
-    return calcWithholdingTotals({ base, vatRatePercent: 7, whtRatePercent: whtRate });
-  }, [meta.withholdingTaxBase, meta.withholdingTaxRatePercent]);
+    return calcWithholdingTotals({
+      base,
+      vatRatePercent: withholdingVatRatePercent(meta),
+      whtRatePercent: whtRate,
+    });
+  }, [meta]);
 
   function onContractorChange(id: string) {
     setContractorId(id);
     const c = contractorOptions.find((x) => x.id === id);
     if (!c) return;
+    const kind = c.entityKind === "COMPANY" ? ("COMPANY" as const) : ("INDIVIDUAL" as const);
     setMeta((m) => ({
       ...m,
       payeeName: c.name,
       payeeTaxId: c.taxId,
       payeeAddress: c.address,
+      payeeEntityKind: kind,
+      vatRatePercent: kind === "COMPANY" ? "7" : "0",
+      payeeBranchHeadOffice: c.branchHeadOffice !== false,
+      payeeBranchNo: c.branchNo || "",
       withholdingTaxRatePercent: c.defaultWhtPercent || "3",
     }));
   }
@@ -242,7 +261,9 @@ export function WithholdingDocumentForm({
         />
         <div className="grid gap-3 sm:grid-cols-3">
           <div>
-            <label className="mb-1 block text-xs text-slate-600">มูลค่าก่อน VAT (ฐานหัก)</label>
+            <label className="mb-1 block text-xs text-slate-600">
+              {withholdingVatRatePercent(meta) > 0 ? "มูลค่าก่อน VAT (ฐานหัก)" : "จำนวนเงิน (ฐานหัก)"}
+            </label>
             <input
               className={inp}
               value={meta.withholdingTaxBase}
@@ -296,8 +317,19 @@ export function WithholdingDocumentForm({
           disabled={pending}
         />
         <div className="rounded-md bg-slate-50 p-3 text-sm space-y-1">
-          <div>VAT 7%: {totals.vatAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท</div>
-          <div>จำนวนเงินที่จ่าย: {totals.totalAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท</div>
+          {withholdingVatRatePercent(meta) > 0 ? (
+            <>
+              <div>
+                VAT 7%: {totals.vatAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท
+              </div>
+              <div>
+                จำนวนเงินที่จ่าย:{" "}
+                {totals.totalAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท
+              </div>
+            </>
+          ) : (
+            <div className="text-xs text-slate-500">บุคคลธรรมดา — ไม่คิด VAT 7%</div>
+          )}
           <div className="font-semibold text-slate-900">
             หัก ณ ที่จ่าย: {totals.withholdingAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท
           </div>

@@ -32,7 +32,38 @@ function parseCostLines(raw: unknown): VehicleCostLine[] {
       category: (row.category as VehicleCostLine["category"]) || "OTHER",
       description: String(row.description ?? ""),
       amount: String(row.amount ?? "0"),
+      entityId: row.entityId ? String(row.entityId) : null,
+      billNo: row.billNo ? String(row.billNo) : null,
       documentId: row.documentId ? String(row.documentId) : null,
+      withholdingDocumentId: row.withholdingDocumentId
+        ? String(row.withholdingDocumentId)
+        : null,
+      paymentVoucherDocumentId: row.paymentVoucherDocumentId
+        ? String(row.paymentVoucherDocumentId)
+        : null,
+      cashbookEntryId: row.cashbookEntryId ? String(row.cashbookEntryId) : null,
+      createdAt: row.createdAt ? String(row.createdAt) : undefined,
+    };
+  });
+}
+
+function parsePurchasePayments(raw: unknown) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((l) => {
+    const row = l as Record<string, unknown>;
+    return {
+      id: String(row.id ?? ""),
+      date: String(row.date ?? ""),
+      amount: String(row.amount ?? "0"),
+      billNo: row.billNo ? String(row.billNo) : null,
+      paymentVoucherDocumentId: row.paymentVoucherDocumentId
+        ? String(row.paymentVoucherDocumentId)
+        : null,
+      paymentVoucherDocumentNumber: row.paymentVoucherDocumentNumber
+        ? String(row.paymentVoucherDocumentNumber)
+        : null,
+      cashbookEntryId: row.cashbookEntryId ? String(row.cashbookEntryId) : null,
+      notes: row.notes ? String(row.notes) : undefined,
       createdAt: row.createdAt ? String(row.createdAt) : undefined,
     };
   });
@@ -58,6 +89,7 @@ function parseVehicle(id: string, d: Record<string, unknown>): VehicleRecord {
     purchaseContractAmount: String(
       d.purchaseContractAmount ?? d.purchasePrice ?? "0",
     ),
+    purchasePayments: parsePurchasePayments(d.purchasePayments),
     saleContractAmount: String(d.saleContractAmount ?? d.expectedSalePrice ?? "0"),
     costLines: parseCostLines(d.costLines ?? d.costLinesJson),
     expectedSalePrice: String(d.expectedSalePrice ?? "0"),
@@ -86,6 +118,7 @@ function toPayload(v: VehicleRecord) {
     purchaseDate: v.purchaseDate,
     purchasePrice: v.purchasePrice,
     purchaseContractAmount: v.purchaseContractAmount || v.purchasePrice,
+    purchasePayments: v.purchasePayments ?? [],
     saleContractAmount: v.saleContractAmount || v.expectedSalePrice,
     costLines: v.costLines,
     expectedSalePrice: v.expectedSalePrice,
@@ -143,7 +176,11 @@ async function nextVehicleCode(): Promise<string> {
 }
 
 export async function createVehicle(
-  input: Omit<VehicleRecord, "id" | "code" | "costLines"> & { code?: string; costLines?: VehicleCostLine[] },
+  input: Omit<VehicleRecord, "id" | "code" | "costLines" | "purchasePayments"> & {
+    code?: string;
+    costLines?: VehicleCostLine[];
+    purchasePayments?: VehicleRecord["purchasePayments"];
+  },
 ) {
   if (!canWriteFirestore()) return { ok: false as const, message: FIRESTORE_WRITE_HINT };
   const firestore = db();
@@ -172,6 +209,7 @@ export async function createVehicle(
         input.purchaseContractAmount && Number(input.purchaseContractAmount) > 0
           ? input.purchaseContractAmount
           : input.purchasePrice ?? "0",
+      purchasePayments: input.purchasePayments ?? [],
       saleContractAmount:
         input.saleContractAmount && Number(input.saleContractAmount) > 0
           ? input.saleContractAmount

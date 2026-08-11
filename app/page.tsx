@@ -1,22 +1,10 @@
 import Link from "next/link";
 import { DashboardShopSummary } from "@/components/DashboardShopSummary";
-import { calcCashflowBalance } from "@/lib/cashbook-repository";
-import { listEntities } from "@/lib/entities-repository";
-import { listSubcontractAgreements } from "@/lib/subcontract-agreements-repository";
-import { listVehicles } from "@/lib/vehicles-repository";
-import { formatBaht } from "@/lib/vehicles/calc";
+import { DashboardHomeClient } from "./DashboardHomeClient";
 
 export const dynamic = "force-dynamic";
 
-export default async function HomePage() {
-  const [entities, vehicles, hireContracts, cash] = await Promise.all([
-    listEntities(),
-    listVehicles(),
-    listSubcontractAgreements(),
-    calcCashflowBalance(),
-  ]);
-  const inStock = vehicles.filter((v) => v.status === "IN_STOCK" || v.status === "RESERVED").length;
-
+export default function HomePage() {
   return (
     <div className="space-y-6">
       <div>
@@ -26,21 +14,7 @@ export default async function HomePage() {
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard title="รถในสต็อก" value={String(inStock)} href="/vehicles" />
-        <StatCard title="คู่ค้า" value={String(entities.length)} href="/entities" />
-        <StatCard
-          title="สัญญาว่าจ้าง"
-          value={String(hireContracts.length)}
-          href="/contracts/subcontract-agreements"
-        />
-        <StatCard
-          title="Cashflow Balance"
-          value={`฿${formatBaht(cash.balance)}`}
-          href="/cashbook"
-          emphasize
-        />
-      </div>
+      <DashboardHomeClient />
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <QuickLink href="/vehicles/new" label="รับรถเข้าสต็อก" />
@@ -51,32 +25,6 @@ export default async function HomePage() {
 
       <DashboardShopSummary />
     </div>
-  );
-}
-
-function StatCard({
-  title,
-  value,
-  href,
-  emphasize,
-}: {
-  title: string;
-  value: string;
-  href: string;
-  emphasize?: boolean;
-}) {
-  return (
-    <Link
-      href={href}
-      className={
-        emphasize
-          ? "rounded-lg border-2 border-slate-900 bg-white p-4 shadow-sm transition hover:bg-slate-50"
-          : "rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300"
-      }
-    >
-      <p className="text-sm text-slate-500">{title}</p>
-      <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">{value}</p>
-    </Link>
   );
 }
 

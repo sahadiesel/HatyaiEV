@@ -9,16 +9,25 @@ const docNav = [
   { href: "/documents/receipt", newHref: "/documents/receipt/new", label: "3. ใบเสร็จรับเงิน" },
   { href: "/documents/withholding", newHref: "/documents/withholding/new", label: "4. ใบหักภาษี ณ ที่จ่าย" },
   { href: "/documents/payment-voucher", newHref: "/documents/payment-voucher/new", label: "5. ใบสำคัญจ่าย" },
-  { href: "/documents/vehicle-sale", newHref: "/documents/vehicle-sale/new", label: "6. สัญญาซื้อขายรถยนต์" },
+  {
+    href: "/documents/purchase-contract",
+    newHref: "/documents/purchase-contract/new",
+    label: "6. สัญญาซื้อ",
+  },
+  {
+    href: "/documents/vehicle-sale",
+    newHref: "/documents/vehicle-sale/new",
+    label: "7. สัญญาขาย",
+  },
   {
     href: "/contracts/hiring-contracts",
     newHref: "/contracts/hiring-contracts/new",
-    label: "7. สัญญารับจ้าง",
+    label: "8. สัญญารับจ้าง",
   },
   {
     href: "/contracts/subcontract-agreements",
     newHref: "/contracts/subcontract-agreements/new",
-    label: "8. สัญญาว่าจ้าง",
+    label: "9. สัญญาว่าจ้าง",
   },
 ] as const;
 

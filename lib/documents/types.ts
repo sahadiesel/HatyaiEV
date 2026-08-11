@@ -35,6 +35,11 @@ export type CommercialDocumentMeta = {
   purchaseType?: "INDIVIDUAL_NO_VAT" | "COMPANY_VAT_7";
   totalCostSnapshot?: number;
   marginSnapshot?: number;
+  /** อ้างอิงสัญญาขาย / ใบกำกับ (โซ่เอกสารขาย) */
+  saleContractId?: string;
+  saleContractNumber?: string;
+  taxInvoiceId?: string;
+  taxInvoiceNumber?: string;
 };
 
 export type PaymentVoucherMeta = {
@@ -50,6 +55,11 @@ export type PaymentVoucherMeta = {
   vehicleId?: string;
   vehicleLabel?: string;
   purpose: string;
+  /** ข้อมูลหัก ณ ที่จ่ายที่ผูกกับใบสำคัญจ่าย (ถ้ามี) */
+  withholdingDocumentNumber?: string;
+  withholdingTaxRatePercent?: string;
+  withholdingTaxBase?: string;
+  withholdingAmount?: string;
 };
 
 export type WithholdingDocumentMeta = {
@@ -59,6 +69,10 @@ export type WithholdingDocumentMeta = {
   payeeAddress: string;
   payeeBranchHeadOffice: boolean;
   payeeBranchNo: string;
+  /** บุคคลธรรมดาไม่มี VAT 7% */
+  payeeEntityKind?: "INDIVIDUAL" | "COMPANY";
+  /** อัตรา VAT ของรายการ (บุคคลธรรมดา = 0) */
+  vatRatePercent?: string;
   incomeTypeLabel: string;
   jobDescription: string;
   withholdingTaxRatePercent: string;
@@ -148,6 +162,8 @@ export function defaultWithholdingMeta(): WithholdingDocumentMeta {
     payeeAddress: "",
     payeeBranchHeadOffice: true,
     payeeBranchNo: "",
+    payeeEntityKind: "INDIVIDUAL",
+    vatRatePercent: "0",
     incomeTypeLabel: "ค่าจ้างทำของ / ค่าบริการ",
     jobDescription: "",
     withholdingTaxRatePercent: "3",

@@ -18,7 +18,13 @@ import {
   calcWithholdingTotals,
   parseAmount,
   recalcLineAmount,
+  withholdingVatRatePercent,
 } from "@/lib/documents/calc";
+import {
+  enrichPaymentVoucherMetaFromWhtDoc,
+  extractWhtDocNumber,
+  effectivePaymentVoucherWithholdingAmount,
+} from "@/lib/documents/payment-voucher-wht";
 import { loadCompanyBrandClient, openPrintHtml } from "@/lib/documents/print-client";
 import {
   buildCommercialPrintHtml,
@@ -89,8 +95,13 @@ export async function listDocumentsClient(kind?: DocumentKind): Promise<Document
       listEntitiesClient(),
     ]);
     const nameById = new Map(entities.map((e) => [e.id, e.name]));
-    let rows = snap.docs.map((d) => parseDocumentClient(d.id, d.data() as Record<string, unknown>));
-    if (kind) rows = rows.filter((r) => r.kind === kind);
+    const all = snap.docs.map((d) => parseDocumentClient(d.id, d.data() as Record<string, unknown>));
+    const whtByNumber = new Map(
+      all
+        .filter((r) => r.kind === "WITHHOLDING_TAX" && r.number)
+        .map((r) => [r.number, r] as const),
+    );
+    let rows = kind ? all.filter((r) => r.kind === kind) : all;
     rows.sort((a, b) => b.issueDate.getTime() - a.issueDate.getTime());
     return rows.slice(0, 200).map((r) => {
       const metaName =
@@ -100,8 +111,13 @@ export async function listDocumentsClient(kind?: DocumentKind): Promise<Document
             ? parseMetaJson<WithholdingDocumentMeta>(r.metaJson, defaultWithholdingMeta()).payeeName
             : parseMetaJson<CommercialDocumentMeta>(r.metaJson, defaultCommercialMeta())
                 .counterpartyName;
+      const withholdingAmount =
+        r.kind === "PAYMENT_VOUCHER"
+          ? String(effectivePaymentVoucherWithholdingAmount(r, whtByNumber))
+          : r.withholdingAmount;
       return {
         ...r,
+        withholdingAmount,
         clientName: (r.clientId && nameById.get(r.clientId)) || metaName || null,
         contractorName: (r.contractorId && nameById.get(r.contractorId)) || null,
       };
@@ -161,14 +177,22 @@ async function autoPostCashClient(opts: {
   totalAmount: number;
   description: string;
   issuedByName?: string;
+  vehicleId?: string | null;
+  entityId?: string | null;
+  vatType?: "NO_VAT" | "FULL_VAT" | "MARGIN_VAT" | null;
+  taxBasisAmount?: string | number | null;
+  customerVatAmount?: string | number | null;
+  remittanceVatAmount?: string | number | null;
 }) {
   if (opts.totalAmount <= 0) return;
   if (opts.kind !== "RECEIPT" && opts.kind !== "PAYMENT_VOUCHER") return;
   const primary = await ensurePrimaryBankAccount();
+  const entryType =
+    opts.kind === "RECEIPT" && opts.vehicleId ? "VEHICLE_SALE" : "DOCUMENT_AUTO";
   await postCashbookEntryClient({
     entryDate: opts.issueDate.toISOString().slice(0, 10),
     direction: opts.kind === "RECEIPT" ? "IN" : "OUT",
-    entryType: "DOCUMENT_AUTO",
+    entryType,
     amount: opts.totalAmount,
     description: opts.description,
     documentId: opts.documentId,
@@ -177,6 +201,12 @@ async function autoPostCashClient(opts: {
     createdByName: opts.issuedByName,
     channel: "BANK",
     bankAccountId: primary?.id ?? null,
+    vehicleId: opts.vehicleId ?? null,
+    entityId: opts.entityId ?? null,
+    vatType: opts.vatType ?? null,
+    taxBasisAmount: opts.taxBasisAmount ?? null,
+    customerVatAmount: opts.customerVatAmount ?? null,
+    remittanceVatAmount: opts.remittanceVatAmount ?? null,
   });
 }
 
@@ -292,14 +322,29 @@ export async function saveCommercialDocumentClient(
     });
 
     if (number) {
+      const vatType =
+        meta.vatScheme === "MARGIN"
+          ? ("MARGIN_VAT" as const)
+          : meta.vatScheme === "FULL_SALE"
+            ? ("FULL_VAT" as const)
+            : meta.vatScheme === "STANDARD"
+              ? ("FULL_VAT" as const)
+              : null;
+      const invRef = meta.taxInvoiceNumber ? ` อ้างอิงใบกำกับ ${meta.taxInvoiceNumber}` : "";
       await autoPostCashClient({
         documentId: id,
         kind,
         number,
         issueDate,
         totalAmount,
-        description: `${DOCUMENT_KIND_ROUTES[kind].titleTh} ${number} — ${meta.counterpartyName}`,
+        description: `${DOCUMENT_KIND_ROUTES[kind].titleTh} ${number}${invRef} — ${meta.counterpartyName || meta.vehicleLabel || ""}`.trim(),
         issuedByName,
+        vehicleId: meta.vehicleId || null,
+        entityId: input.clientId || null,
+        vatType,
+        taxBasisAmount: meta.marginSnapshot ?? meta.totalCostSnapshot ?? null,
+        customerVatAmount: vatAmount,
+        remittanceVatAmount: vatAmount,
       });
     }
     return { ok: true, id, number: number || null };
@@ -333,7 +378,7 @@ export async function saveWithholdingDocumentClient(input: {
   const whtRate = parseAmount(meta.withholdingTaxRatePercent);
   const { subtotal, vatAmount, totalAmount, withholdingAmount } = calcWithholdingTotals({
     base,
-    vatRatePercent: 7,
+    vatRatePercent: withholdingVatRatePercent(meta),
     whtRatePercent: whtRate,
   });
 
@@ -405,11 +450,22 @@ export async function savePaymentVoucherClient(input: {
   const kind: DocumentKind = "PAYMENT_VOUCHER";
   const issueDate = input.issueDate ? new Date(input.issueDate) : new Date();
   const issuedByName = (input.issuedByName ?? "").trim();
-  const meta = {
+  const notes = input.notes ?? "";
+  let meta = {
     ...parseMetaJson<PaymentVoucherMeta>(input.metaJson, defaultPaymentVoucherMeta()),
     issuedByName,
   };
   const totalAmount = parseAmount(input.totalAmount);
+
+  // ถ้าอ้างอิงใบหัก ณ ที่จ่าย ให้ดึงยอดหักมาใส่ meta + ฟิลด์เอกสาร
+  const whtRef = extractWhtDocNumber(meta, notes);
+  if (whtRef && parseAmount(meta.withholdingAmount ?? "") <= 0) {
+    const whtRows = await listDocumentsClient("WITHHOLDING_TAX");
+    const whtDoc = whtRows.find((d) => d.number === whtRef) || null;
+    meta = enrichPaymentVoucherMetaFromWhtDoc(meta, notes, whtDoc);
+  }
+
+  const withholdingAmount = parseAmount(meta.withholdingAmount ?? "");
 
   try {
     const existingId = input.id?.trim() || "";
@@ -419,8 +475,8 @@ export async function savePaymentVoucherClient(input: {
       subtotal: String(totalAmount),
       vatAmount: "0",
       totalAmount: String(totalAmount),
-      withholdingAmount: "0",
-      notes: input.notes ?? "",
+      withholdingAmount: String(withholdingAmount),
+      notes,
       linesJson: JSON.stringify([
         {
           sequence: 1,
@@ -558,13 +614,26 @@ export async function assignDocumentNumberClient(
       number,
       updatedAt: serverTimestamp(),
     });
+    const meta = parseMetaJson<CommercialDocumentMeta>(
+      existing.metaJson,
+      defaultCommercialMeta(),
+    );
+    const invRef = meta.taxInvoiceNumber ? ` อ้างอิงใบกำกับ ${meta.taxInvoiceNumber}` : "";
     await autoPostCashClient({
       documentId,
       kind: existing.kind,
       number,
       issueDate: existing.issueDate,
       totalAmount: parseAmount(existing.totalAmount),
-      description: `${DOCUMENT_KIND_ROUTES[existing.kind].titleTh} ${number}`,
+      description: `${DOCUMENT_KIND_ROUTES[existing.kind].titleTh} ${number}${invRef}`,
+      vehicleId: meta.vehicleId || null,
+      entityId: existing.clientId,
+      vatType:
+        meta.vatScheme === "MARGIN"
+          ? "MARGIN_VAT"
+          : meta.vatScheme === "FULL_SALE" || meta.vatScheme === "STANDARD"
+            ? "FULL_VAT"
+            : null,
     });
     return { ok: true, number };
   } catch (e) {
