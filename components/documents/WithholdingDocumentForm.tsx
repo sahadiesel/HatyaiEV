@@ -71,6 +71,8 @@ export function WithholdingDocumentForm({
   );
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [assignNumber, setAssignNumber] = useState(!initial?.id && !documentId);
+  const [includeSignature, setIncludeSignature] = useState(true);
+  const [includeStamp, setIncludeStamp] = useState(true);
 
   useEffect(() => {
     void listEntitiesClient().then((ents) => {
@@ -157,7 +159,10 @@ export function WithholdingDocumentForm({
       setSavedId(docId);
       if (r.number) setSavedNumber(r.number);
       if (assignNumber && docId) {
-        await printDocumentClient(docId, profile?.name);
+        await printDocumentClient(docId, profile?.name, {
+          includeSignature,
+          includeStamp,
+        });
       }
       router.push(`/documents/withholding/${docId}`);
       router.refresh();
@@ -361,6 +366,26 @@ export function WithholdingDocumentForm({
         ออกเลขที่เอกสารเมื่อบันทึก
       </label>
 
+      <div className="flex flex-wrap items-center gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+        <span className="font-medium text-slate-800">ตัวเลือกพิมพ์:</span>
+        <label className="inline-flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            checked={includeSignature}
+            onChange={(e) => setIncludeSignature(e.target.checked)}
+          />
+          ลายเซ็น
+        </label>
+        <label className="inline-flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            checked={includeStamp}
+            onChange={(e) => setIncludeStamp(e.target.checked)}
+          />
+          ตรายาง
+        </label>
+      </div>
+
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
@@ -373,6 +398,9 @@ export function WithholdingDocumentForm({
         {savedId && (
           <DocumentPrintLink
             documentId={savedId}
+            showOptions={false}
+            includeSignature={includeSignature}
+            includeStamp={includeStamp}
             className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
           />
         )}

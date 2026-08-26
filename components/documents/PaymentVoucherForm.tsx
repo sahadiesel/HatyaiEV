@@ -5,17 +5,9 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { DocumentPrintLink } from "@/components/documents/DocumentPrintLink";
-import { parseAmount } from "@/lib/documents/calc";
-import {
-  enrichPaymentVoucherMetaFromWhtDoc,
-  extractWhtDocNumber,
-  resolvePaymentVoucherWht,
-} from "@/lib/documents/payment-voucher-wht";
-import {
-  getDocumentClient,
-  listDocumentsClient,
-  savePaymentVoucherClient,
-} from "@/lib/documents-client";
+import { parseAmount, roundMoney2 } from "@/lib/documents/calc";
+import { resolvePaymentVoucherWht } from "@/lib/documents/payment-voucher-wht";
+import { getDocumentClient, savePaymentVoucherClient } from "@/lib/documents-client";
 import { listEntitiesClient } from "@/lib/entities-client";
 import {
   defaultPaymentVoucherMeta,
@@ -29,6 +21,10 @@ const inp =
 
 function fmt(n: number): string {
   return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function calcWhtAmount(base: number, rate: number): number {
+  return roundMoney2((base * rate) / 100);
 }
 
 export function PaymentVoucherForm({
@@ -53,7 +49,21 @@ export function PaymentVoucherForm({
   const [loadingDoc, setLoadingDoc] = useState(Boolean(documentId && !initial));
   const [loadError, setLoadError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [meta, setMeta] = useState<PaymentVoucherMeta>(initial?.meta ?? defaultPaymentVoucherMeta());
+  const [meta, setMeta] = useState<PaymentVoucherMeta>(() => {
+    const m = initial?.meta ?? defaultPaymentVoucherMeta();
+    const hasWht =
+      m.withholdingEnabled === true ||
+      parseAmount(m.withholdingAmount ?? "") > 0 ||
+      Boolean(m.withholdingDocumentNumber);
+    return {
+      ...defaultPaymentVoucherMeta(),
+      ...m,
+      withholdingEnabled: hasWht,
+      withholdingTaxRatePercent: m.withholdingTaxRatePercent || "3",
+      withholdingTaxBase: m.withholdingTaxBase || initial?.totalAmount || "",
+      withholdingAmount: m.withholdingAmount || "0",
+    };
+  });
   const [amount, setAmount] = useState(initial?.totalAmount ?? "0");
   const [issueDate, setIssueDate] = useState(
     initial?.issueDate ?? new Date().toISOString().slice(0, 10),
@@ -83,17 +93,23 @@ export function PaymentVoucherForm({
         setLoadingDoc(false);
         return;
       }
-      let m = parseMetaJson<PaymentVoucherMeta>(row.metaJson, defaultPaymentVoucherMeta());
+      const m = parseMetaJson<PaymentVoucherMeta>(row.metaJson, defaultPaymentVoucherMeta());
       const noteText = row.notes || "";
-      const whtNo = extractWhtDocNumber(m, noteText);
-      if (whtNo && parseAmount(m.withholdingAmount ?? "") <= 0) {
-        const whtRows = await listDocumentsClient("WITHHOLDING_TAX");
-        const whtDoc = whtRows.find((d) => d.number === whtNo) || null;
-        m = enrichPaymentVoucherMetaFromWhtDoc(m, noteText, whtDoc);
-      } else if (whtNo && !m.withholdingDocumentNumber) {
-        m = { ...m, withholdingDocumentNumber: whtNo };
-      }
-      setMeta(m);
+      const hasWht =
+        m.withholdingEnabled === true ||
+        parseAmount(m.withholdingAmount ?? "") > 0 ||
+        parseAmount(row.withholdingAmount) > 0 ||
+        Boolean(m.withholdingDocumentNumber);
+      setMeta({
+        ...defaultPaymentVoucherMeta(),
+        ...m,
+        withholdingEnabled: hasWht,
+        withholdingTaxRatePercent: m.withholdingTaxRatePercent || "3",
+        withholdingTaxBase: m.withholdingTaxBase || String(row.totalAmount || "0"),
+        withholdingAmount:
+          m.withholdingAmount ||
+          (parseAmount(row.withholdingAmount) > 0 ? String(row.withholdingAmount) : "0"),
+      });
       setAmount(String(row.totalAmount || "0"));
       setIssueDate(row.issueDate.toISOString().slice(0, 10));
       setNotes(noteText);
@@ -107,32 +123,111 @@ export function PaymentVoucherForm({
     };
   }, [documentId, initial]);
 
-  const wht = useMemo(() => resolvePaymentVoucherWht(meta, notes), [meta, notes]);
   const payAmount = parseAmount(amount);
-  const netPay = wht.whtAmt > 0 ? Math.max(0, payAmount - wht.whtAmt) : payAmount;
+  const whtRate = parseAmount(meta.withholdingTaxRatePercent ?? "");
+  const whtBase = parseAmount(meta.withholdingTaxBase ?? "") || payAmount;
+  const whtAmt = meta.withholdingEnabled ? calcWhtAmount(whtBase, whtRate) : 0;
+  const netPay = Math.max(0, payAmount - whtAmt);
+  const wht = useMemo(() => resolvePaymentVoucherWht(meta, notes), [meta, notes]);
+
+  function setWhtEnabled(enabled: boolean) {
+    setMeta((m) => {
+      const base = parseAmount(m.withholdingTaxBase ?? "") || payAmount;
+      const rate = parseAmount(m.withholdingTaxRatePercent ?? "3") || 3;
+      return {
+        ...m,
+        withholdingEnabled: enabled,
+        withholdingTaxBase: String(base || payAmount),
+        withholdingTaxRatePercent: m.withholdingTaxRatePercent || "3",
+        withholdingAmount: enabled ? String(calcWhtAmount(base || payAmount, rate)) : "0",
+      };
+    });
+  }
+
+  function setWhtRate(rateStr: string) {
+    setMeta((m) => {
+      const base = parseAmount(m.withholdingTaxBase ?? "") || payAmount;
+      const rate = parseAmount(rateStr);
+      return {
+        ...m,
+        withholdingTaxRatePercent: rateStr,
+        withholdingAmount: m.withholdingEnabled ? String(calcWhtAmount(base, rate)) : "0",
+      };
+    });
+  }
+
+  function setWhtBase(baseStr: string) {
+    setMeta((m) => {
+      const base = parseAmount(baseStr);
+      const rate = parseAmount(m.withholdingTaxRatePercent ?? "");
+      return {
+        ...m,
+        withholdingTaxBase: baseStr,
+        withholdingAmount: m.withholdingEnabled ? String(calcWhtAmount(base, rate)) : "0",
+      };
+    });
+  }
+
+  function onAmountChange(v: string) {
+    setAmount(v);
+    setMeta((m) => {
+      if (!m.withholdingEnabled) return m;
+      const pay = parseAmount(v);
+      const base = parseAmount(m.withholdingTaxBase ?? "") || pay;
+      // ถ้าฐานยังว่างหรือเท่ากับยอดเดิม ให้ sync ตามยอดใหม่
+      const prevPay = payAmount;
+      const prevBase = parseAmount(m.withholdingTaxBase ?? "");
+      const nextBase = !m.withholdingTaxBase || prevBase === prevPay ? pay : base;
+      const rate = parseAmount(m.withholdingTaxRatePercent ?? "");
+      return {
+        ...m,
+        withholdingTaxBase: String(nextBase),
+        withholdingAmount: String(calcWhtAmount(nextBase, rate)),
+      };
+    });
+  }
 
   function onEntity(id: string) {
     const e = entityOptions.find((x) => x.id === id);
     if (!e) return;
-    setMeta((m) => ({
-      ...m,
-      payeeName: e.name,
-      payeeAddress: e.address,
-      payeeTaxId: e.taxId,
-      payeePhone: e.phone,
-    }));
+    setMeta((m) => {
+      const rate = e.defaultWhtPercent || m.withholdingTaxRatePercent || "3";
+      const base = parseAmount(m.withholdingTaxBase ?? "") || payAmount;
+      return {
+        ...m,
+        payeeName: e.name,
+        payeeAddress: e.address,
+        payeeTaxId: e.taxId,
+        payeePhone: e.phone,
+        withholdingTaxRatePercent: rate,
+        withholdingAmount: m.withholdingEnabled
+          ? String(calcWhtAmount(base, parseAmount(rate)))
+          : m.withholdingAmount,
+      };
+    });
   }
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     const wasEdit = Boolean(savedId);
     startTransition(async () => {
+      const base = parseAmount(meta.withholdingTaxBase ?? "") || payAmount;
+      const rate = parseAmount(meta.withholdingTaxRatePercent ?? "") || 3;
+      const amt = meta.withholdingEnabled ? calcWhtAmount(base, rate) : 0;
+      const nextMeta: PaymentVoucherMeta = {
+        ...meta,
+        issuedByName: profile?.name ?? "",
+        withholdingEnabled: Boolean(meta.withholdingEnabled),
+        withholdingTaxBase: String(base),
+        withholdingTaxRatePercent: String(rate),
+        withholdingAmount: String(amt),
+      };
       const res = await savePaymentVoucherClient({
         id: savedId || null,
         issueDate,
         totalAmount: amount,
         notes,
-        metaJson: JSON.stringify({ ...meta, issuedByName: profile?.name ?? "" }),
+        metaJson: JSON.stringify(nextMeta),
         issuedByName: profile?.name ?? "",
         assignNumber,
         postCashbook: !wasEdit,
@@ -143,15 +238,19 @@ export function PaymentVoucherForm({
       }
       setSavedId(res.id);
       if (res.number) setSavedNumber(res.number);
-      // รีโหลด meta หลังบันทึก (กรณีระบบเติมยอดหักอัตโนมัติ)
       const fresh = await getDocumentClient(res.id);
       if (fresh) {
         setMeta(parseMetaJson<PaymentVoucherMeta>(fresh.metaJson, defaultPaymentVoucherMeta()));
+        setNotes(fresh.notes || notes);
       }
+      const whtHint =
+        res.withholdingDocumentNumber != null && res.withholdingDocumentNumber
+          ? ` · สร้างใบหัก ${res.withholdingDocumentNumber}`
+          : "";
       setMsg(
         wasEdit
-          ? "บันทึกการแก้ไขแล้ว (ไม่ลง cashbook ซ้ำ)"
-          : "บันทึกใบสำคัญจ่ายแล้ว — ลงสมุดเงินสดอัตโนมัติ",
+          ? `บันทึกการแก้ไขแล้ว — อัปเดตช่องทาง/ยอดในสมุดเงินสดแล้ว${whtHint}`
+          : `บันทึกใบสำคัญจ่ายแล้ว — ลงสมุดเงินสดอัตโนมัติ${whtHint}`,
       );
       router.refresh();
     });
@@ -238,7 +337,7 @@ export function PaymentVoucherForm({
         </label>
         <label className="text-sm">
           <span className="mb-1 block text-slate-600">จำนวนเงิน</span>
-          <input className={inp} value={amount} onChange={(e) => setAmount(e.target.value)} required />
+          <input className={inp} value={amount} onChange={(e) => onAmountChange(e.target.value)} required />
         </label>
         <label className="text-sm">
           <span className="mb-1 block text-slate-600">วิธีจ่าย</span>
@@ -253,82 +352,89 @@ export function PaymentVoucherForm({
             <option value="TRANSFER">โอน</option>
             <option value="CHEQUE">เช็ค</option>
           </select>
+          <p className="mt-1 text-[11px] text-slate-500">
+            {meta.paymentMethod === "CASH"
+              ? "ลงสมุดเงินสดช่องทางเงินสดหน้าร้าน"
+              : "ลงสมุดเงินสดช่องทางบัญชีธนาคารหลัก"}
+          </p>
         </label>
       </div>
 
-      {wht.hasWht && (
-        <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50/80 p-4">
-          <h3 className="text-sm font-semibold text-amber-950">รายละเอียดหักภาษี ณ ที่จ่าย</h3>
-          <p className="text-xs text-amber-900">
-            ดึงอัตโนมัติจากใบหัก ณ ที่จ่ายที่อ้างอิง — แก้ไขได้ถ้าต้องการ
-          </p>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="text-sm">
-              <span className="mb-1 block text-slate-600">เลขที่หนังสือรับรอง</span>
-              <input
-                className={inp}
-                value={meta.withholdingDocumentNumber || ""}
-                onChange={(e) =>
-                  setMeta((m) => ({ ...m, withholdingDocumentNumber: e.target.value }))
-                }
-              />
-            </label>
-            <label className="text-sm">
-              <span className="mb-1 block text-slate-600">อัตราหัก (%)</span>
-              <input
-                className={inp}
-                value={meta.withholdingTaxRatePercent || ""}
-                onChange={(e) =>
-                  setMeta((m) => ({ ...m, withholdingTaxRatePercent: e.target.value }))
-                }
-              />
-            </label>
-            <label className="text-sm">
-              <span className="mb-1 block text-slate-600">มูลค่าฐานหัก</span>
-              <input
-                className={inp}
-                value={meta.withholdingTaxBase || ""}
-                onChange={(e) => setMeta((m) => ({ ...m, withholdingTaxBase: e.target.value }))}
-              />
-            </label>
-            <label className="text-sm">
-              <span className="mb-1 block text-slate-600">ยอดหัก ณ ที่จ่าย</span>
-              <input
-                className={inp}
-                value={meta.withholdingAmount || ""}
-                onChange={(e) => setMeta((m) => ({ ...m, withholdingAmount: e.target.value }))}
-              />
-            </label>
-          </div>
-          <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm text-slate-800 sm:grid-cols-4">
-            <div>
-              <dt className="text-xs text-slate-500">ยอดจ่ายก่อนหัก</dt>
-              <dd className="tabular-nums font-medium">{fmt(payAmount)}</dd>
+      <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3">
+        <label className="flex items-center gap-2 text-sm font-semibold text-amber-950">
+          <input
+            type="checkbox"
+            checked={Boolean(meta.withholdingEnabled)}
+            onChange={(e) => setWhtEnabled(e.target.checked)}
+            disabled={pending}
+          />
+          มีหักภาษี ณ ที่จ่าย
+        </label>
+        <p className="mt-1 text-xs text-amber-900">
+          ติ๊กแล้วระบบจะสร้างใบหัก ณ ที่จ่ายให้อัตโนมัติจากยอดใบสำคัญจ่าย — ยอดตัดบัญชี = จ่ายสุทธิหลังหัก
+        </p>
+
+        {meta.withholdingEnabled && (
+          <div className="mt-3 space-y-3">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <label className="text-sm">
+                <span className="mb-1 block text-slate-600">อัตราหัก (%)</span>
+                <input
+                  className={inp}
+                  value={meta.withholdingTaxRatePercent || ""}
+                  onChange={(e) => setWhtRate(e.target.value)}
+                  disabled={pending}
+                />
+              </label>
+              <label className="text-sm">
+                <span className="mb-1 block text-slate-600">มูลค่าฐานหัก</span>
+                <input
+                  className={inp}
+                  value={meta.withholdingTaxBase || ""}
+                  onChange={(e) => setWhtBase(e.target.value)}
+                  disabled={pending}
+                />
+              </label>
+              <label className="text-sm">
+                <span className="mb-1 block text-slate-600">ยอดหัก ณ ที่จ่าย</span>
+                <input className={inp} value={fmt(whtAmt)} readOnly disabled />
+              </label>
             </div>
-            <div>
-              <dt className="text-xs text-slate-500">หัก ณ ที่จ่าย</dt>
-              <dd className="tabular-nums font-medium text-amber-800">{fmt(wht.whtAmt)}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-slate-500">จ่ายสุทธิ</dt>
-              <dd className="tabular-nums font-semibold">{fmt(netPay)}</dd>
-            </div>
-            {wht.whtNo ? (
+            <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm text-slate-800 sm:grid-cols-4">
               <div>
-                <dt className="text-xs text-slate-500">อ้างอิง</dt>
-                <dd>
-                  <Link
-                    href="/documents/withholding"
-                    className="font-mono text-xs text-blue-800 hover:underline"
-                  >
-                    {wht.whtNo}
-                  </Link>
-                </dd>
+                <dt className="text-xs text-slate-500">ยอดจ่ายก่อนหัก</dt>
+                <dd className="tabular-nums font-medium">{fmt(payAmount)}</dd>
               </div>
-            ) : null}
-          </dl>
-        </div>
-      )}
+              <div>
+                <dt className="text-xs text-slate-500">หัก ณ ที่จ่าย</dt>
+                <dd className="tabular-nums font-medium text-amber-800">{fmt(whtAmt)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-500">จ่ายสุทธิ (ตัดบัญชี)</dt>
+                <dd className="tabular-nums font-semibold">{fmt(netPay)}</dd>
+              </div>
+              {wht.whtNo ? (
+                <div>
+                  <dt className="text-xs text-slate-500">ใบหักที่สร้างแล้ว</dt>
+                  <dd>
+                    <Link
+                      href="/documents/withholding"
+                      className="font-mono text-xs text-blue-800 hover:underline"
+                    >
+                      {wht.whtNo}
+                    </Link>
+                  </dd>
+                </div>
+              ) : (
+                <div>
+                  <dt className="text-xs text-slate-500">ใบหัก</dt>
+                  <dd className="text-xs text-slate-500">จะสร้างเมื่อบันทึก</dd>
+                </div>
+              )}
+            </dl>
+          </div>
+        )}
+      </div>
 
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={assignNumber} onChange={(e) => setAssignNumber(e.target.checked)} />
@@ -340,7 +446,12 @@ export function PaymentVoucherForm({
         <textarea className={inp} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
       </label>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+        <span className="font-medium text-slate-800">ตัวเลือกพิมพ์:</span>
+        <span className="text-xs text-slate-500">ติ๊กก่อนกดพิมพ์ด้านล่าง</span>
+      </div>
+
+      <div className="flex flex-wrap gap-2 items-center">
         <button
           type="submit"
           disabled={pending}
@@ -349,7 +460,11 @@ export function PaymentVoucherForm({
           {pending ? "กำลังบันทึก…" : savedId ? "บันทึก" : "บันทึก + ลงสมุดเงินสด"}
         </button>
         {savedId && savedNumber && (
-          <DocumentPrintLink documentId={savedId} label="พิมพ์ PDF" />
+          <DocumentPrintLink
+            documentId={savedId}
+            label="พิมพ์ PDF"
+            className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
+          />
         )}
       </div>
     </form>

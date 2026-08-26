@@ -1,4 +1,4 @@
-import { CommercialDocumentForm } from "@/components/documents/CommercialDocumentForm";
+import { ReceiptForm } from "@/components/documents/ReceiptForm";
 import { loadClientsForDocument } from "../../document-page-data";
 
 export const metadata = { title: "แก้ไขใบเสร็จรับเงิน — HYEV" };
@@ -6,12 +6,5 @@ export const metadata = { title: "แก้ไขใบเสร็จรับ�
 export default async function EditReceiptPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const clients = await loadClientsForDocument();
-  return (
-    <CommercialDocumentForm
-      kind="RECEIPT"
-      listHref="/documents/receipt"
-      clients={clients}
-      documentId={id}
-    />
-  );
+  return <ReceiptForm clients={clients} documentId={id} />;
 }

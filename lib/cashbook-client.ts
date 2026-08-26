@@ -4,9 +4,11 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   serverTimestamp,
   setDoc,
+  updateDoc,
 } from "firebase/firestore";
 import type {
   BankAccountRecord,
@@ -17,6 +19,7 @@ import type {
   CashVatType,
 } from "@/lib/domain-types";
 import { parseAmount, roundMoney2 } from "@/lib/documents/calc";
+import { toYmdLocal } from "@/lib/format-date-th";
 import { getFirestoreDb } from "@/lib/firebase";
 import { firestoreCollections } from "@/lib/firestore-collections";
 import {
@@ -159,7 +162,7 @@ export async function postCashbookEntryClient(
       if (dup) return { ok: true, id: dup.id, entryNo: dup.entryNo };
     }
 
-    const entryDate = input.entryDate || new Date().toISOString().slice(0, 10);
+    const entryDate = toYmdLocal(input.entryDate) || toYmdLocal(new Date());
     const ymd = entryDate.replace(/-/g, "").slice(0, 8);
     const prefix = `CB-${ymd}-`;
     let max = 0;
@@ -232,6 +235,84 @@ export async function deleteCashbookEntryClient(id: string) {
   }
 }
 
+/** อัปเดตรายการสมุดเงินสดที่ผูกกับเอกสาร (วันที่ + ช่องทาง + ยอด + ลิงก์เอกสาร) */
+export async function syncCashbookForDocumentClient(
+  documentId: string,
+  patch: {
+    entryDate?: string;
+    channel?: CashChannel;
+    bankAccountId?: string | null;
+    amount?: string | number;
+    description?: string;
+    withholdingDocumentId?: string | null;
+    withholdingDocumentNumber?: string | null;
+    paymentVoucherDocumentId?: string | null;
+    paymentVoucherDocumentNumber?: string | null;
+  },
+): Promise<{ ok: true; updated: number } | { ok: false; message: string }> {
+  const db = getFirestoreDb();
+  if (!db) return { ok: false, message: "ยังไม่ได้ตั้งค่า Firebase" };
+  if (!documentId) return { ok: false, message: "เอกสารไม่ถูกต้อง" };
+  try {
+    const entries = await listCashbookEntriesClient(500);
+    const linked = entries.filter(
+      (e) =>
+        e.documentId === documentId ||
+        e.paymentVoucherDocumentId === documentId,
+    );
+    if (linked.length === 0) return { ok: true, updated: 0 };
+
+    let bankAccountId = patch.bankAccountId;
+    if (patch.channel === "BANK" && (bankAccountId === undefined || bankAccountId === null)) {
+      const primary = await ensurePrimaryBankAccount();
+      bankAccountId = primary?.id ?? null;
+    }
+    if (patch.channel === "CASH") bankAccountId = null;
+
+    const ymd = patch.entryDate ? toYmdLocal(patch.entryDate) : null;
+    const amountStr =
+      patch.amount !== undefined ? String(roundMoney2(parseAmount(patch.amount))) : undefined;
+
+    await Promise.all(
+      linked.map((e) => {
+        const data: Record<string, unknown> = { updatedAt: serverTimestamp() };
+        if (ymd) data.entryDate = ymd;
+        if (patch.channel) {
+          data.channel = patch.channel;
+          data.bankAccountId = bankAccountId ?? null;
+        }
+        if (amountStr !== undefined) data.amount = amountStr;
+        if (patch.description !== undefined) data.description = patch.description;
+        if (patch.withholdingDocumentId !== undefined) {
+          data.withholdingDocumentId = patch.withholdingDocumentId;
+        }
+        if (patch.withholdingDocumentNumber !== undefined) {
+          data.withholdingDocumentNumber = patch.withholdingDocumentNumber;
+        }
+        if (patch.paymentVoucherDocumentId !== undefined) {
+          data.paymentVoucherDocumentId = patch.paymentVoucherDocumentId;
+        }
+        if (patch.paymentVoucherDocumentNumber !== undefined) {
+          data.paymentVoucherDocumentNumber = patch.paymentVoucherDocumentNumber;
+        }
+        return updateDoc(doc(db, firestoreCollections.cashbookEntries, e.id), data);
+      }),
+    );
+    return { ok: true, updated: linked.length };
+  } catch (e) {
+    console.error("[syncCashbookForDocumentClient]", e);
+    return { ok: false, message: e instanceof Error ? e.message : "อัปเดตสมุดเงินสดไม่สำเร็จ" };
+  }
+}
+
+/** @deprecated ใช้ syncCashbookForDocumentClient */
+export async function syncCashbookDateForDocumentClient(
+  documentId: string,
+  entryDate: string,
+): Promise<{ ok: true; updated: number } | { ok: false; message: string }> {
+  return syncCashbookForDocumentClient(documentId, { entryDate });
+}
+
 export function calcBalancesFromEntries(
   entries: CashbookEntry[],
   banks: BankAccountRecord[],
@@ -284,11 +365,104 @@ export function calcBalancesFromEntries(
   };
 }
 
+/**
+ * เติมลิงก์ใบหัก ณ ที่จ่ายในสมุดเงินสด จาก meta ของใบสำคัญจ่าย
+ * (กรณีบันทึกเก่าที่ยังไม่ได้เก็บ withholdingDocumentId ไว้ในรายการเงินสด)
+ */
+export async function backfillCashbookWhtLinksClient(
+  entries: CashbookEntry[],
+): Promise<CashbookEntry[]> {
+  const db = getFirestoreDb();
+  if (!db) return entries;
+
+  const need = entries.filter((e) => {
+    const pvId =
+      e.paymentVoucherDocumentId ||
+      (e.documentKind === "PAYMENT_VOUCHER" ? e.documentId : null);
+    return Boolean(pvId) && !e.withholdingDocumentId;
+  });
+  if (need.length === 0) return entries;
+
+  let whtByNumber: Map<string, string> | null = null;
+  const ensureWhtMap = async () => {
+    if (whtByNumber) return whtByNumber;
+    whtByNumber = new Map();
+    const snap = await getDocs(collection(db, firestoreCollections.documents));
+    for (const d of snap.docs) {
+      const row = d.data() as Record<string, unknown>;
+      if (String(row.kind) === "WITHHOLDING_TAX" && row.number) {
+        whtByNumber.set(String(row.number), d.id);
+      }
+    }
+    return whtByNumber;
+  };
+
+  const byId = new Map(entries.map((e) => [e.id, e]));
+
+  await Promise.all(
+    need.map(async (e) => {
+      const pvId =
+        e.paymentVoucherDocumentId ||
+        (e.documentKind === "PAYMENT_VOUCHER" ? e.documentId : null);
+      if (!pvId) return;
+      try {
+        const snap = await getDoc(doc(db, firestoreCollections.documents, pvId));
+        if (!snap.exists()) return;
+        const d = snap.data() as Record<string, unknown>;
+        let meta: {
+          withholdingDocumentId?: string;
+          withholdingDocumentNumber?: string;
+        } = {};
+        try {
+          meta = JSON.parse(String(d.metaJson ?? "{}")) as typeof meta;
+        } catch {
+          /* ignore */
+        }
+        let whtId = meta.withholdingDocumentId?.trim() || null;
+        let whtNo = meta.withholdingDocumentNumber?.trim() || null;
+        if (!whtNo) {
+          const notes = String(d.notes ?? "");
+          const m =
+            notes.match(/สร้างหัก\s*ณ\s*ที่จ่าย\s*([A-Za-z0-9\-]+)/i) ||
+            notes.match(/หัก\s*ณ\s*ที่จ่าย\s*([A-Za-z0-9\-]+)/i);
+          if (m?.[1]) whtNo = m[1];
+        }
+        if (!whtId && whtNo) {
+          const map = await ensureWhtMap();
+          whtId = map.get(whtNo) ?? null;
+        }
+        if (!whtId && !whtNo) return;
+
+        const pvNumber = String(d.number ?? e.documentNumber ?? "") || null;
+        await updateDoc(doc(db, firestoreCollections.cashbookEntries, e.id), {
+          withholdingDocumentId: whtId,
+          withholdingDocumentNumber: whtNo,
+          paymentVoucherDocumentId: pvId,
+          paymentVoucherDocumentNumber: pvNumber || e.paymentVoucherDocumentNumber,
+          updatedAt: serverTimestamp(),
+        });
+        byId.set(e.id, {
+          ...e,
+          withholdingDocumentId: whtId,
+          withholdingDocumentNumber: whtNo,
+          paymentVoucherDocumentId: pvId,
+          paymentVoucherDocumentNumber: pvNumber || e.paymentVoucherDocumentNumber,
+        });
+      } catch (err) {
+        console.error("[backfillCashbookWhtLinksClient]", e.id, err);
+      }
+    }),
+  );
+
+  return entries.map((e) => byId.get(e.id) ?? e);
+}
+
 export async function loadCashbookDashboard() {
-  const [entries, primary] = await Promise.all([
+  const [rawEntries, primary] = await Promise.all([
     listCashbookEntriesClient(),
     ensurePrimaryBankAccount(),
   ]);
+  const entries = await backfillCashbookWhtLinksClient(rawEntries);
   const banks = await listBankAccountsClient();
   const balances = calcBalancesFromEntries(entries, banks, 0);
   return { entries, banks, primary, ...balances };

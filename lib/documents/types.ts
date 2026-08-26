@@ -26,6 +26,8 @@ export type CommercialDocumentMeta = {
   bankAccountText?: string;
   chequeNo?: string;
   chequeDate?: string;
+  /** ชื่อธนาคารบนเช็ค (ใบเสร็จ) */
+  chequeBankName?: string;
   vatRatePercent?: number;
   /** รถที่เกี่ยวข้อง (ถ้าเป็นใบขายรถ) */
   vehicleId?: string;
@@ -40,6 +42,14 @@ export type CommercialDocumentMeta = {
   saleContractNumber?: string;
   taxInvoiceId?: string;
   taxInvoiceNumber?: string;
+  taxInvoiceDate?: string;
+  /** บัญชีธนาคารที่รับเงิน (ใบเสร็จ) — ว่างถ้าเป็นเงินสด */
+  receiveBankAccountId?: string | null;
+  /** มีหัก ณ ที่จ่ายตอนรับเงินหรือไม่ */
+  withholdingEnabled?: boolean;
+  withholdingTaxRatePercent?: string;
+  withholdingTaxBase?: string;
+  withholdingAmount?: string;
 };
 
 export type PaymentVoucherMeta = {
@@ -55,7 +65,10 @@ export type PaymentVoucherMeta = {
   vehicleId?: string;
   vehicleLabel?: string;
   purpose: string;
+  /** ติ๊กมีหัก ณ ที่จ่าย → ระบบสร้างใบหักอัตโนมัติจากยอดใบสำคัญจ่าย */
+  withholdingEnabled?: boolean;
   /** ข้อมูลหัก ณ ที่จ่ายที่ผูกกับใบสำคัญจ่าย (ถ้ามี) */
+  withholdingDocumentId?: string;
   withholdingDocumentNumber?: string;
   withholdingTaxRatePercent?: string;
   withholdingTaxBase?: string;
@@ -183,6 +196,10 @@ export function defaultPaymentVoucherMeta(): PaymentVoucherMeta {
     paymentMethod: "TRANSFER",
     bankAccountText: "",
     purpose: "",
+    withholdingEnabled: false,
+    withholdingTaxRatePercent: "3",
+    withholdingTaxBase: "",
+    withholdingAmount: "0",
   };
 }
 

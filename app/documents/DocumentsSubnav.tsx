@@ -7,8 +7,8 @@ const docNav = [
   { href: "/documents/invoice", newHref: "/documents/invoice/new", label: "1. ใบแจ้งหนี้" },
   { href: "/documents/tax-invoice", newHref: "/documents/tax-invoice/new", label: "2. ใบกำกับภาษี" },
   { href: "/documents/receipt", newHref: "/documents/receipt/new", label: "3. ใบเสร็จรับเงิน" },
-  { href: "/documents/withholding", newHref: "/documents/withholding/new", label: "4. ใบหักภาษี ณ ที่จ่าย" },
-  { href: "/documents/payment-voucher", newHref: "/documents/payment-voucher/new", label: "5. ใบสำคัญจ่าย" },
+  { href: "/documents/payment-voucher", newHref: "/documents/payment-voucher/new", label: "4. ใบสำคัญจ่าย" },
+  { href: "/documents/withholding", newHref: "/documents/withholding/new", label: "5. ใบหักภาษี ณ ที่จ่าย" },
   {
     href: "/documents/purchase-contract",
     newHref: "/documents/purchase-contract/new",

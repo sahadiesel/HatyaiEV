@@ -11,25 +11,27 @@ import {
   type Timestamp,
 } from "firebase/firestore";
 import { ensurePrimaryBankAccount } from "@/lib/bank-accounts-client";
-import { postCashbookEntryClient } from "@/lib/cashbook-client";
+import { postCashbookEntryClient, syncCashbookForDocumentClient, syncCashbookDateForDocumentClient } from "@/lib/cashbook-client";
 import {
   calcCommercialTotals,
   calcVehicleSaleVatTotals,
   calcWithholdingTotals,
   parseAmount,
   recalcLineAmount,
+  roundMoney2,
   withholdingVatRatePercent,
 } from "@/lib/documents/calc";
+import { toYmdLocal } from "@/lib/format-date-th";
 import {
-  enrichPaymentVoucherMetaFromWhtDoc,
-  extractWhtDocNumber,
   effectivePaymentVoucherWithholdingAmount,
 } from "@/lib/documents/payment-voucher-wht";
+import { listEntitiesClient } from "@/lib/entities-client";
 import { loadCompanyBrandClient, openPrintHtml } from "@/lib/documents/print-client";
 import {
   buildCommercialPrintHtml,
   buildPaymentVoucherPrintHtml,
   buildWithholdingPrintHtml,
+  type HyevWhtCopyVariant,
 } from "@/lib/documents/print-html";
 import {
   defaultCommercialMeta,
@@ -48,7 +50,6 @@ import type {
   DocumentListItem,
   DocumentRecord,
 } from "@/lib/documents-firestore-types";
-import { listEntitiesClient } from "@/lib/entities-client";
 import { getFirestoreDb } from "@/lib/firebase";
 import { firestoreCollections } from "@/lib/firestore-collections";
 
@@ -101,6 +102,21 @@ export async function listDocumentsClient(kind?: DocumentKind): Promise<Document
         .filter((r) => r.kind === "WITHHOLDING_TAX" && r.number)
         .map((r) => [r.number, r] as const),
     );
+    const receiptByTaxInvoiceId = new Map<string, { id: string; number: string }>();
+    for (const r of all) {
+      if (r.kind !== "RECEIPT") continue;
+      try {
+        const m = JSON.parse(r.metaJson || "{}") as { taxInvoiceId?: string };
+        if (m.taxInvoiceId && !receiptByTaxInvoiceId.has(m.taxInvoiceId)) {
+          receiptByTaxInvoiceId.set(m.taxInvoiceId, {
+            id: r.id,
+            number: r.number || "—",
+          });
+        }
+      } catch {
+        /* ignore */
+      }
+    }
     let rows = kind ? all.filter((r) => r.kind === kind) : all;
     rows.sort((a, b) => b.issueDate.getTime() - a.issueDate.getTime());
     return rows.slice(0, 200).map((r) => {
@@ -115,11 +131,15 @@ export async function listDocumentsClient(kind?: DocumentKind): Promise<Document
         r.kind === "PAYMENT_VOUCHER"
           ? String(effectivePaymentVoucherWithholdingAmount(r, whtByNumber))
           : r.withholdingAmount;
+      const linkedReceipt =
+        r.kind === "TAX_INVOICE" ? receiptByTaxInvoiceId.get(r.id) : undefined;
       return {
         ...r,
         withholdingAmount,
         clientName: (r.clientId && nameById.get(r.clientId)) || metaName || null,
         contractorName: (r.contractorId && nameById.get(r.contractorId)) || null,
+        receiptNumber: linkedReceipt?.number ?? null,
+        receiptId: linkedReceipt?.id ?? null,
       };
     });
   } catch (e) {
@@ -183,14 +203,29 @@ async function autoPostCashClient(opts: {
   taxBasisAmount?: string | number | null;
   customerVatAmount?: string | number | null;
   remittanceVatAmount?: string | number | null;
+  channel?: "CASH" | "BANK";
+  bankAccountId?: string | null;
+  withholdingDocumentId?: string | null;
+  withholdingDocumentNumber?: string | null;
+  paymentVoucherDocumentId?: string | null;
+  paymentVoucherDocumentNumber?: string | null;
 }) {
   if (opts.totalAmount <= 0) return;
   if (opts.kind !== "RECEIPT" && opts.kind !== "PAYMENT_VOUCHER") return;
   const primary = await ensurePrimaryBankAccount();
+  /** เงินสด → CASH · โอน/เช็ค/ไม่ระบุ → BANK (บัญชีหลัก) */
+  const channel: "CASH" | "BANK" =
+    opts.channel ?? (opts.bankAccountId ? "BANK" : "BANK");
+  const bankAccountId =
+    channel === "CASH"
+      ? null
+      : opts.bankAccountId !== undefined && opts.bankAccountId !== null
+        ? opts.bankAccountId
+        : primary?.id ?? null;
   const entryType =
     opts.kind === "RECEIPT" && opts.vehicleId ? "VEHICLE_SALE" : "DOCUMENT_AUTO";
   await postCashbookEntryClient({
-    entryDate: opts.issueDate.toISOString().slice(0, 10),
+    entryDate: toYmdLocal(opts.issueDate) || toYmdLocal(new Date()),
     direction: opts.kind === "RECEIPT" ? "IN" : "OUT",
     entryType,
     amount: opts.totalAmount,
@@ -199,14 +234,22 @@ async function autoPostCashClient(opts: {
     documentKind: opts.kind,
     documentNumber: opts.number,
     createdByName: opts.issuedByName,
-    channel: "BANK",
-    bankAccountId: primary?.id ?? null,
+    channel,
+    bankAccountId,
     vehicleId: opts.vehicleId ?? null,
     entityId: opts.entityId ?? null,
     vatType: opts.vatType ?? null,
     taxBasisAmount: opts.taxBasisAmount ?? null,
     customerVatAmount: opts.customerVatAmount ?? null,
     remittanceVatAmount: opts.remittanceVatAmount ?? null,
+    withholdingDocumentId: opts.withholdingDocumentId ?? null,
+    withholdingDocumentNumber: opts.withholdingDocumentNumber ?? null,
+    paymentVoucherDocumentId:
+      opts.paymentVoucherDocumentId ??
+      (opts.kind === "PAYMENT_VOUCHER" ? opts.documentId : null),
+    paymentVoucherDocumentNumber:
+      opts.paymentVoucherDocumentNumber ??
+      (opts.kind === "PAYMENT_VOUCHER" ? opts.number : null),
   });
 }
 
@@ -244,6 +287,7 @@ export async function saveCommercialDocumentClient(
   }
 
   const issueDate = input.issueDate ? new Date(input.issueDate) : new Date();
+  const issueYmd = toYmdLocal(input.issueDate) || toYmdLocal(issueDate);
   const lines = parseLines(input.linesJson);
   const issuedByName = (input.issuedByName ?? "").trim();
   const meta = {
@@ -277,6 +321,10 @@ export async function saveCommercialDocumentClient(
 
   try {
     const existingId = input.id?.trim() || "";
+    const whtAmt =
+      kind === "RECEIPT" && meta.withholdingEnabled
+        ? parseAmount(meta.withholdingAmount ?? "")
+        : 0;
     if (existingId) {
       const existing = await getDocumentClient(existingId);
       if (!existing) return { ok: false, message: "ไม่พบเอกสาร" };
@@ -289,7 +337,7 @@ export async function saveCommercialDocumentClient(
           subtotal: String(subtotal),
           vatAmount: String(vatAmount),
           totalAmount: String(totalAmount),
-          withholdingAmount: "0",
+          withholdingAmount: String(whtAmt),
           notes: input.notes ?? "",
           linesJson: JSON.stringify(lines),
           metaJson: JSON.stringify(meta),
@@ -299,6 +347,9 @@ export async function saveCommercialDocumentClient(
         },
         { merge: true },
       );
+      if (kind === "RECEIPT" || kind === "PAYMENT_VOUCHER") {
+        await syncCashbookDateForDocumentClient(existingId, issueYmd);
+      }
       return { ok: true, id: existingId, number: existing.number || null };
     }
 
@@ -311,7 +362,7 @@ export async function saveCommercialDocumentClient(
       subtotal: String(subtotal),
       vatAmount: String(vatAmount),
       totalAmount: String(totalAmount),
-      withholdingAmount: "0",
+      withholdingAmount: String(whtAmt),
       notes: input.notes ?? "",
       linesJson: JSON.stringify(lines),
       metaJson: JSON.stringify(meta),
@@ -331,13 +382,26 @@ export async function saveCommercialDocumentClient(
               ? ("FULL_VAT" as const)
               : null;
       const invRef = meta.taxInvoiceNumber ? ` อ้างอิงใบกำกับ ${meta.taxInvoiceNumber}` : "";
+      const netCash = Math.max(0, roundMoney2(totalAmount - whtAmt));
+      const receiveChannel =
+        kind === "RECEIPT"
+          ? meta.paymentMethod === "CASH"
+            ? ("CASH" as const)
+            : ("BANK" as const)
+          : undefined;
+      const whtNote =
+        whtAmt > 0
+          ? ` (หัก ณ ที่จ่าย ${meta.withholdingTaxRatePercent || ""}% = ${whtAmt.toLocaleString("th-TH", { minimumFractionDigits: 2 })} · เข้าบัญชี ${netCash.toLocaleString("th-TH", { minimumFractionDigits: 2 })})`
+          : "";
       await autoPostCashClient({
         documentId: id,
         kind,
         number,
         issueDate,
-        totalAmount,
-        description: `${DOCUMENT_KIND_ROUTES[kind].titleTh} ${number}${invRef} — ${meta.counterpartyName || meta.vehicleLabel || ""}`.trim(),
+        totalAmount: kind === "RECEIPT" ? netCash : totalAmount,
+        description:
+          `${DOCUMENT_KIND_ROUTES[kind].titleTh} ${number}${invRef} — ${meta.counterpartyName || meta.vehicleLabel || ""}`.trim() +
+          whtNote,
         issuedByName,
         vehicleId: meta.vehicleId || null,
         entityId: input.clientId || null,
@@ -345,6 +409,13 @@ export async function saveCommercialDocumentClient(
         taxBasisAmount: meta.marginSnapshot ?? meta.totalCostSnapshot ?? null,
         customerVatAmount: vatAmount,
         remittanceVatAmount: vatAmount,
+        channel: receiveChannel,
+        bankAccountId:
+          kind === "RECEIPT"
+            ? meta.paymentMethod === "TRANSFER"
+              ? meta.receiveBankAccountId || null
+              : null
+            : undefined,
       });
     }
     return { ok: true, id, number: number || null };
@@ -443,29 +514,114 @@ export async function savePaymentVoucherClient(input: {
   assignNumber?: boolean;
   issuedByName?: string;
   postCashbook?: boolean;
-}): Promise<{ ok: true; id: string; number: string | null } | { ok: false; message: string }> {
+}): Promise<
+  | {
+      ok: true;
+      id: string;
+      number: string | null;
+      withholdingDocumentId: string | null;
+      withholdingDocumentNumber: string | null;
+    }
+  | { ok: false; message: string }
+> {
   const db = getFirestoreDb();
   if (!db) return { ok: false, message: "ยังไม่ได้ตั้งค่า Firebase (NEXT_PUBLIC_FIREBASE_*)" };
 
   const kind: DocumentKind = "PAYMENT_VOUCHER";
   const issueDate = input.issueDate ? new Date(input.issueDate) : new Date();
+  const issueYmd = toYmdLocal(input.issueDate) || toYmdLocal(issueDate);
   const issuedByName = (input.issuedByName ?? "").trim();
-  const notes = input.notes ?? "";
+  let notes = input.notes ?? "";
   let meta = {
     ...parseMetaJson<PaymentVoucherMeta>(input.metaJson, defaultPaymentVoucherMeta()),
     issuedByName,
   };
   const totalAmount = parseAmount(input.totalAmount);
 
-  // ถ้าอ้างอิงใบหัก ณ ที่จ่าย ให้ดึงยอดหักมาใส่ meta + ฟิลด์เอกสาร
-  const whtRef = extractWhtDocNumber(meta, notes);
-  if (whtRef && parseAmount(meta.withholdingAmount ?? "") <= 0) {
-    const whtRows = await listDocumentsClient("WITHHOLDING_TAX");
-    const whtDoc = whtRows.find((d) => d.number === whtRef) || null;
-    meta = enrichPaymentVoucherMetaFromWhtDoc(meta, notes, whtDoc);
-  }
+  // ใบสำคัญจ่ายเป็นต้นทาง — คำนวณหัก ณ ที่จ่ายจากยอด PV แล้วสร้าง/อัปเดตใบหักอัตโนมัติ
+  const withholdingEnabled = Boolean(meta.withholdingEnabled);
+  let withholdingDocumentId: string | null = meta.withholdingDocumentId?.trim() || null;
+  let withholdingDocumentNumber: string | null = meta.withholdingDocumentNumber?.trim() || null;
+  let withholdingAmount = 0;
 
-  const withholdingAmount = parseAmount(meta.withholdingAmount ?? "");
+  if (withholdingEnabled) {
+    const base = parseAmount(meta.withholdingTaxBase ?? "") || totalAmount;
+    const rate = parseAmount(meta.withholdingTaxRatePercent ?? "") || 3;
+    const entities = await listEntitiesClient();
+    const payee =
+      entities.find((e) => e.taxId && e.taxId === meta.payeeTaxId) ||
+      entities.find((e) => e.name === meta.payeeName) ||
+      null;
+    const whtMetaBase = {
+      ...defaultWithholdingMeta(),
+      payeeName: meta.payeeName,
+      payeeTaxId: meta.payeeTaxId,
+      payeeAddress: meta.payeeAddress,
+      payeeBranchHeadOffice: payee?.branchHeadOffice !== false,
+      payeeBranchNo: payee?.branchNo || "",
+      payeeEntityKind:
+        payee?.entityKind === "COMPANY" ? ("COMPANY" as const) : ("INDIVIDUAL" as const),
+      vatRatePercent: payee?.entityKind === "COMPANY" ? "7" : "0",
+      incomeTypeLabel: "ค่าจ้างทำของ / ค่าแรง",
+      jobDescription: meta.purpose || "จ่ายเงิน",
+      withholdingTaxRatePercent: String(rate),
+      withholdingTaxBase: String(base),
+      paymentDate: issueYmd,
+      paymentMethod: meta.paymentMethod || "TRANSFER",
+      referenceNo: meta.vehicleLabel || "",
+    };
+    const totals = calcWithholdingTotals({
+      base,
+      vatRatePercent: withholdingVatRatePercent(whtMetaBase),
+      whtRatePercent: rate,
+    });
+    withholdingAmount =
+      parseAmount(meta.withholdingAmount ?? "") > 0
+        ? parseAmount(meta.withholdingAmount ?? "")
+        : totals.withholdingAmount;
+
+    // หาใบหักเดิมที่ผูกไว้ (ถ้ามี) เพื่ออัปเดตแทนสร้างซ้ำ
+    let existingWhtId = withholdingDocumentId;
+    if (!existingWhtId && withholdingDocumentNumber) {
+      const whtRows = await listDocumentsClient("WITHHOLDING_TAX");
+      existingWhtId = whtRows.find((d) => d.number === withholdingDocumentNumber)?.id ?? null;
+    }
+
+    const wht = await saveWithholdingDocumentClient({
+      id: existingWhtId,
+      contractorId: payee?.id ?? null,
+      issueDate: issueYmd,
+      metaJson: JSON.stringify({ ...whtMetaBase, issuedByName }),
+      assignNumber: true,
+      issuedByName,
+      notes: `จากใบสำคัญจ่าย — ${meta.purpose || meta.payeeName}`,
+    });
+    if (!wht.ok) return wht;
+    withholdingDocumentId = wht.id;
+    withholdingDocumentNumber = wht.number;
+
+    meta = {
+      ...meta,
+      withholdingEnabled: true,
+      withholdingDocumentId: withholdingDocumentId || undefined,
+      withholdingDocumentNumber: withholdingDocumentNumber || undefined,
+      withholdingTaxBase: String(base),
+      withholdingTaxRatePercent: String(rate),
+      withholdingAmount: String(withholdingAmount),
+    };
+    if (withholdingDocumentNumber && !notes.includes(withholdingDocumentNumber)) {
+      notes = notes.trim()
+        ? `${notes.trim()}\nสร้างหัก ณ ที่จ่าย ${withholdingDocumentNumber}`
+        : `สร้างหัก ณ ที่จ่าย ${withholdingDocumentNumber}`;
+    }
+  } else {
+    meta = {
+      ...meta,
+      withholdingEnabled: false,
+      withholdingAmount: "0",
+    };
+    withholdingAmount = 0;
+  }
 
   try {
     const existingId = input.id?.trim() || "";
@@ -501,7 +657,33 @@ export async function savePaymentVoucherClient(input: {
         { ...payload, number: existing.number },
         { merge: true },
       );
-      return { ok: true, id: existingId, number: existing.number || null };
+      const channel = meta.paymentMethod === "CASH" ? ("CASH" as const) : ("BANK" as const);
+      const netOut =
+        withholdingAmount > 0
+          ? Math.max(0, roundMoney2(totalAmount - withholdingAmount))
+          : totalAmount;
+      const whtNote =
+        withholdingAmount > 0
+          ? ` (หัก ณ ที่จ่าย ${meta.withholdingTaxRatePercent || ""}% = ${withholdingAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} · จ่ายสุทธิ ${netOut.toLocaleString("th-TH", { minimumFractionDigits: 2 })})`
+          : "";
+      await syncCashbookForDocumentClient(existingId, {
+        entryDate: issueYmd,
+        channel,
+        bankAccountId: channel === "CASH" ? null : undefined,
+        amount: netOut,
+        description: `ใบสำคัญจ่าย — ${meta.purpose || meta.payeeName}${whtNote}`,
+        paymentVoucherDocumentId: existingId,
+        paymentVoucherDocumentNumber: existing.number || null,
+        withholdingDocumentId: withholdingDocumentId,
+        withholdingDocumentNumber: withholdingDocumentNumber,
+      });
+      return {
+        ok: true,
+        id: existingId,
+        number: existing.number || null,
+        withholdingDocumentId,
+        withholdingDocumentNumber,
+      };
     }
 
     const id = newId();
@@ -512,17 +694,38 @@ export async function savePaymentVoucherClient(input: {
       createdAt: serverTimestamp(),
     });
     if (input.postCashbook !== false && number) {
+      const channel = meta.paymentMethod === "CASH" ? ("CASH" as const) : ("BANK" as const);
+      const netOut =
+        withholdingAmount > 0
+          ? Math.max(0, roundMoney2(totalAmount - withholdingAmount))
+          : totalAmount;
+      const whtNote =
+        withholdingAmount > 0
+          ? ` (หัก ณ ที่จ่าย ${meta.withholdingTaxRatePercent || ""}% = ${withholdingAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} · จ่ายสุทธิ ${netOut.toLocaleString("th-TH", { minimumFractionDigits: 2 })})`
+          : "";
       await autoPostCashClient({
         documentId: id,
         kind,
         number,
         issueDate,
-        totalAmount,
-        description: `ใบสำคัญจ่าย — ${meta.purpose || meta.payeeName}`,
+        totalAmount: netOut,
+        description: `ใบสำคัญจ่าย — ${meta.purpose || meta.payeeName}${whtNote}`,
         issuedByName,
+        channel,
+        bankAccountId: channel === "BANK" ? undefined : null,
+        paymentVoucherDocumentId: id,
+        paymentVoucherDocumentNumber: number,
+        withholdingDocumentId,
+        withholdingDocumentNumber,
       });
     }
-    return { ok: true, id, number: number || null };
+    return {
+      ok: true,
+      id,
+      number: number || null,
+      withholdingDocumentId,
+      withholdingDocumentNumber,
+    };
   } catch (e) {
     console.error("[savePaymentVoucherClient]", e);
     return { ok: false, message: e instanceof Error ? e.message : "บันทึกไม่สำเร็จ" };
@@ -532,6 +735,12 @@ export async function savePaymentVoucherClient(input: {
 export async function printDocumentClient(
   documentId: string,
   issuedByName?: string,
+  printAssets?: {
+    includeSignature?: boolean;
+    includeStamp?: boolean;
+    preview?: boolean;
+    whtCopies?: HyevWhtCopyVariant[];
+  },
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const docRow = await getDocumentClient(documentId);
   if (!docRow) return { ok: false, message: "ไม่พบเอกสาร" };
@@ -540,6 +749,10 @@ export async function printDocumentClient(
   const vatAmount = Number(docRow.vatAmount);
   const totalAmount = Number(docRow.totalAmount);
   const withholdingAmount = Number(docRow.withholdingAmount);
+  const assets = {
+    includeSignature: printAssets?.includeSignature !== false,
+    includeStamp: printAssets?.includeStamp !== false,
+  };
 
   let html: string;
   if (docRow.kind === "WITHHOLDING_TAX") {
@@ -554,6 +767,8 @@ export async function printDocumentClient(
       totalAmount,
       withholdingAmount,
       issuedByName: issuedByName || meta.issuedByName,
+      copies: printAssets?.whtCopies,
+      ...assets,
     });
   } else if (docRow.kind === "PAYMENT_VOUCHER") {
     const meta = parseMetaJson<PaymentVoucherMeta>(docRow.metaJson, defaultPaymentVoucherMeta());
@@ -565,6 +780,7 @@ export async function printDocumentClient(
       totalAmount,
       notes: docRow.notes,
       issuedByName: issuedByName || meta.issuedByName,
+      ...assets,
     });
   } else {
     const lines = parseLinesJson(docRow.linesJson);
@@ -581,7 +797,16 @@ export async function printDocumentClient(
       totalAmount,
       notes: docRow.notes,
       issuedByName: issuedByName || meta.issuedByName,
+      ...assets,
     });
+  }
+  if (printAssets?.preview) {
+    html = html.replace(
+      /<script>window\.onload=function\(\)\{window\.print\(\);\}<\/script>/g,
+      `<div class="no-print" style="padding:8px;background:#f1f5f9;text-align:center;font-family:Sarabun,sans-serif;font-size:14px">
+  <button type="button" onclick="window.print()" style="padding:6px 14px;cursor:pointer">พิมพ์ / บันทึก PDF</button>
+</div>`,
+    );
   }
   openPrintHtml(html);
   return { ok: true };
@@ -619,13 +844,32 @@ export async function assignDocumentNumberClient(
       defaultCommercialMeta(),
     );
     const invRef = meta.taxInvoiceNumber ? ` อ้างอิงใบกำกับ ${meta.taxInvoiceNumber}` : "";
+    const totalAmount = parseAmount(existing.totalAmount);
+    const whtAmt =
+      existing.kind === "RECEIPT" && meta.withholdingEnabled
+        ? parseAmount(meta.withholdingAmount ?? existing.withholdingAmount)
+        : 0;
+    const netCash =
+      existing.kind === "RECEIPT"
+        ? Math.max(0, roundMoney2(totalAmount - whtAmt))
+        : totalAmount;
+    const receiveChannel =
+      existing.kind === "RECEIPT"
+        ? meta.paymentMethod === "CASH"
+          ? ("CASH" as const)
+          : ("BANK" as const)
+        : undefined;
+    const whtNote =
+      whtAmt > 0
+        ? ` (หัก ณ ที่จ่าย ${meta.withholdingTaxRatePercent || ""}% = ${whtAmt.toLocaleString("th-TH", { minimumFractionDigits: 2 })} · เข้าบัญชี ${netCash.toLocaleString("th-TH", { minimumFractionDigits: 2 })})`
+        : "";
     await autoPostCashClient({
       documentId,
       kind: existing.kind,
       number,
       issueDate: existing.issueDate,
-      totalAmount: parseAmount(existing.totalAmount),
-      description: `${DOCUMENT_KIND_ROUTES[existing.kind].titleTh} ${number}${invRef}`,
+      totalAmount: netCash,
+      description: `${DOCUMENT_KIND_ROUTES[existing.kind].titleTh} ${number}${invRef}${whtNote}`,
       vehicleId: meta.vehicleId || null,
       entityId: existing.clientId,
       vatType:
@@ -634,6 +878,13 @@ export async function assignDocumentNumberClient(
           : meta.vatScheme === "FULL_SALE" || meta.vatScheme === "STANDARD"
             ? "FULL_VAT"
             : null,
+      channel: receiveChannel,
+      bankAccountId:
+        existing.kind === "RECEIPT"
+          ? meta.paymentMethod === "TRANSFER"
+            ? meta.receiveBankAccountId || null
+            : null
+          : undefined,
     });
     return { ok: true, number };
   } catch (e) {

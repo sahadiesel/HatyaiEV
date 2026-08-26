@@ -23,6 +23,7 @@ import type {
 import { listEntitiesClient } from "@/lib/entities-client";
 import { entityHasRoleGroup } from "@/lib/entity-roles";
 import { formatBaht } from "@/lib/vehicles/calc";
+import { formatDateThBE } from "@/lib/format-date-th";
 import { createDocsForVehicleCostExpense } from "@/lib/vehicles/cost-expense-docs";
 
 const inp =
@@ -231,6 +232,8 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
       let withholdingDocumentNumber: string | null = null;
       let paymentVoucherDocumentId: string | null = null;
       let paymentVoucherDocumentNumber: string | null = null;
+      let cashOutAmount = Number(String(amount).replace(/,/g, "")) || 0;
+      let withholdingAmount = 0;
 
       if (dir === "OUT" && (expenseCategory === "LABOR" || expenseCategory === "PARTS")) {
         if (expenseCategory === "LABOR" && !entity) {
@@ -264,16 +267,22 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
         withholdingDocumentNumber = docs.withholdingDocumentNumber;
         paymentVoucherDocumentId = docs.paymentVoucherDocumentId;
         paymentVoucherDocumentNumber = docs.paymentVoucherDocumentNumber;
+        cashOutAmount = docs.cashOutAmount;
+        withholdingAmount = docs.withholdingAmount;
         entryType = expenseCategory === "LABOR" ? "LABOR" : "PARTS";
       }
 
       const billHint = billNo ? ` บิล ${billNo}` : "";
+      const whtHint =
+        withholdingAmount > 0
+          ? ` (หัก ณ ที่จ่าย ${withholdingAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} · จ่ายสุทธิ ${cashOutAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })})`
+          : "";
       const res = await postCashbookEntryClient({
         entryDate,
         direction: dir,
         entryType,
-        amount,
-        description: `${description}${billHint}`,
+        amount: cashOutAmount,
+        description: `${description}${billHint}${whtHint}`,
         channel,
         bankAccountId: channel === "BANK" ? bankAccountId || null : null,
         vatType,
@@ -301,6 +310,8 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
       const extra = [
         withholdingDocumentNumber && `หัก ${withholdingDocumentNumber}`,
         paymentVoucherDocumentNumber && `จ่าย ${paymentVoucherDocumentNumber}`,
+        withholdingAmount > 0 &&
+          `ตัดบัญชี ฿${cashOutAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })}`,
       ]
         .filter(Boolean)
         .join(" · ");
@@ -319,7 +330,7 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
       <div>
         <h1 className="text-2xl font-bold text-slate-900">สมุดเงินสด & บัญชีธนาคาร</h1>
         <p className="mt-1 text-sm text-slate-600">
-          หน้าต่างเดียวคุมกระแสเงินสดหน้าร้านและบัญชีธนาคาร — ลงอัตโนมัติเมื่อออกบิล + บันทึกมือ
+          ตัดเงินสด / บัญชีธนาคารตามช่องทางแต่ละรายการ — Cashflow รวมทุกบัญชี
         </p>
       </div>
 
@@ -344,6 +355,7 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <p className="text-sm text-slate-500">Cashflow ({filterPeriodLabel})</p>
+          <p className="mt-0.5 text-[11px] text-slate-400">รวมทุกช่องทาง · เงินสด + บัญชีธนาคาร</p>
           <p className="mt-1 text-xl font-bold tabular-nums text-emerald-700">
             รับ ฿{formatBaht(monthBalances.totalIn)}
           </p>
@@ -532,7 +544,7 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
             )}
             {direction === "OUT" && expenseCategory === "LABOR" && (
               <p className="text-xs text-slate-600 sm:col-span-2 lg:col-span-4">
-                จะสร้างเอกสารหัก ณ ที่จ่าย และใบสำคัญจ่ายให้อัตโนมัติ
+                จะสร้างใบสำคัญจ่าย (+ ใบหัก ณ ที่จ่ายอัตโนมัติ)
               </p>
             )}
             <label className="text-sm">
@@ -667,7 +679,7 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
               return (
                 <tr key={e.id} className="border-b border-slate-100">
                   <td className="px-3 py-2 font-mono text-xs">{e.entryNo}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">{e.entryDate}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">{formatDateThBE(e.entryDate)}</td>
                   <td className="px-3 py-2 text-xs">{channelLabel}</td>
                   <td className="px-3 py-2 text-xs">{TYPE_LABELS[e.entryType] ?? e.entryType}</td>
                   <td className="px-3 py-2 text-xs">

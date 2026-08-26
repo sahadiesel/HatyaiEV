@@ -10,6 +10,7 @@ import { getFirestoreDb } from "@/lib/firebase";
 import { firestoreCollections } from "@/lib/firestore-collections";
 import { listVehiclesClient } from "@/lib/vehicles-client";
 import { formatBaht, summarizeVehicleEconomics, VEHICLE_STATUS_LABELS } from "@/lib/vehicles/calc";
+import { formatDateThBE } from "@/lib/format-date-th";
 
 type DashState = {
   loading: boolean;
@@ -128,7 +129,7 @@ export function DashboardHomeClient() {
           hint={
             state.loading
               ? "กำลังโหลด…"
-              : `รับ ฿${formatBaht(state.cashIn)} · จ่าย ฿${formatBaht(state.cashOut)}`
+              : `รวมทุกบัญชี · รับ ฿${formatBaht(state.cashIn)} · จ่าย ฿${formatBaht(state.cashOut)}`
           }
         />
       </div>
@@ -198,7 +199,7 @@ export function DashboardHomeClient() {
                     <div className="min-w-0">
                       <p className="truncate font-medium text-slate-900">{e.description}</p>
                       <p className="text-xs text-slate-500">
-                        {e.entryDate} · {e.entryNo}
+                        {formatDateThBE(e.entryDate)} · {e.entryNo}
                       </p>
                     </div>
                     <p

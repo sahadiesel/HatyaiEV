@@ -23,7 +23,11 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const issuedByFromQuery = new URL(req.url).searchParams.get("issuedBy")?.trim() ?? "";
+  const url = new URL(req.url);
+  const issuedByFromQuery = url.searchParams.get("issuedBy")?.trim() ?? "";
+  const includeSignature = url.searchParams.get("sig") !== "0";
+  const includeStamp = url.searchParams.get("stamp") !== "0";
+  const previewOnly = url.searchParams.get("preview") === "1";
   const doc = await getDocument(id);
   if (!doc) {
     return new NextResponse("ไม่พบเอกสาร", { status: 404 });
@@ -43,6 +47,7 @@ export async function GET(
   const vatAmount = Number(doc.vatAmount);
   const totalAmount = Number(doc.totalAmount);
   const withholdingAmount = Number(doc.withholdingAmount);
+  const assets = { includeSignature, includeStamp };
 
   let html: string;
   if (doc.kind === "WITHHOLDING_TAX") {
@@ -57,6 +62,7 @@ export async function GET(
       totalAmount,
       withholdingAmount,
       issuedByName: issuedByFromQuery || meta.issuedByName,
+      ...assets,
     });
   } else if (doc.kind === "PAYMENT_VOUCHER") {
     const meta = parseMetaJson<PaymentVoucherMeta>(doc.metaJson, defaultPaymentVoucherMeta());
@@ -68,6 +74,7 @@ export async function GET(
       totalAmount,
       notes: doc.notes,
       issuedByName: issuedByFromQuery || meta.issuedByName,
+      ...assets,
     });
   } else {
     const lines = parseLinesJson(doc.linesJson);
@@ -84,7 +91,17 @@ export async function GET(
       totalAmount,
       notes: doc.notes,
       issuedByName: issuedByFromQuery || meta.issuedByName,
+      ...assets,
     });
+  }
+
+  if (previewOnly) {
+    html = html.replace(
+      /<script>window\.onload=function\(\)\{window\.print\(\);\}<\/script>/g,
+      `<div class="no-print" style="padding:8px;background:#f1f5f9;text-align:center;font-family:Sarabun,sans-serif;font-size:14px">
+  <button type="button" onclick="window.print()" style="padding:6px 14px;cursor:pointer">พิมพ์ / บันทึก PDF</button>
+</div>`,
+    );
   }
 
   return new NextResponse(html, {

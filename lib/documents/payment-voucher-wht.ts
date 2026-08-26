@@ -34,7 +34,8 @@ export function resolvePaymentVoucherWht(
   const rate = parseAmount(meta.withholdingTaxRatePercent ?? "");
   const base = parseAmount(meta.withholdingTaxBase ?? "");
   const whtAmt = parseAmount(meta.withholdingAmount ?? "");
-  const hasWht = Boolean(whtNo || whtAmt > 0 || rate > 0);
+  const hasWht =
+    meta.withholdingEnabled === true || Boolean(whtNo || whtAmt > 0);
   return { hasWht, whtNo, rate, base, whtAmt };
 }
 

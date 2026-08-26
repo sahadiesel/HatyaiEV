@@ -7,6 +7,7 @@ import { parseAmount } from "@/lib/documents/calc";
 import { printDocumentClient } from "@/lib/documents-client";
 import type { EntityRecord, VehicleCostCategory, VehicleRecord, VehicleStatus } from "@/lib/domain-types";
 import { entityHasRoleGroup } from "@/lib/entity-roles";
+import { formatDateThBE } from "@/lib/format-date-th";
 import {
   addVehicleCostLineClient,
   addVehiclePurchasePaymentClient,
@@ -171,6 +172,8 @@ export function VehicleDetailClient({
         },
         {
           postCashbook: fd.get("postCash") === "1",
+          cashOutAmount: docs.cashOutAmount,
+          withholdingAmount: docs.withholdingAmount,
           withholdingDocumentNumber: docs.withholdingDocumentNumber,
           paymentVoucherDocumentNumber: docs.paymentVoucherDocumentNumber,
         },
@@ -183,6 +186,11 @@ export function VehicleDetailClient({
       const parts: string[] = ["เพิ่มต้นทุนสะสมแล้ว"];
       if (docs.withholdingDocumentNumber) {
         parts.push(`หัก ณ ที่จ่าย ${docs.withholdingDocumentNumber}`);
+        if (docs.withholdingAmount > 0) {
+          parts.push(
+            `ตัดบัญชี ฿${docs.cashOutAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })}`,
+          );
+        }
       }
       if (docs.paymentVoucherDocumentNumber) {
         parts.push(`ใบสำคัญจ่าย ${docs.paymentVoucherDocumentNumber}`);
@@ -289,7 +297,7 @@ export function VehicleDetailClient({
         <form onSubmit={addCost} className="space-y-3 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="font-semibold text-slate-900">เพิ่มต้นทุนสะสม</h2>
           <p className="text-xs text-slate-500">
-            ค่าแรง → สร้างหัก ณ ที่จ่าย + ใบสำคัญจ่าย · อะไหล่ → บันทึกเลขบิล หรือสร้างใบสำคัญจ่ายเมื่อไม่มีบิล
+            ค่าแรง → สร้างใบสำคัญจ่าย (+ ใบหัก ณ ที่จ่ายอัตโนมัติ) · อะไหล่ → บันทึกเลขบิล หรือสร้างใบสำคัญจ่ายเมื่อไม่มีบิล
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-sm">
@@ -364,7 +372,7 @@ export function VehicleDetailClient({
             )}
             {costCategory === "LABOR" && (
               <p className="text-xs text-slate-600 sm:col-span-2">
-                จะสร้างเอกสารหัก ณ ที่จ่าย และใบสำคัญจ่ายให้อัตโนมัติ (อัตราหักตามค่าเริ่มต้นของคู่ค้า)
+                จะสร้างใบสำคัญจ่าย (+ ใบหัก ณ ที่จ่ายอัตโนมัติ ตามอัตราเริ่มต้นของคู่ค้า)
               </p>
             )}
             {(costCategory === "PARTS" || costCategory === "REPAIR") && (
@@ -399,7 +407,7 @@ export function VehicleDetailClient({
             <dt className="text-slate-500">ผู้ขาย</dt>
             <dd>{seller?.name || "—"}</dd>
             <dt className="text-slate-500">วันที่ซื้อ</dt>
-            <dd>{vehicle.purchaseDate || "—"}</dd>
+            <dd>{formatDateThBE(vehicle.purchaseDate)}</dd>
             <dt className="text-slate-500">มูลค่าสัญญา</dt>
             <dd className="tabular-nums">
               ฿{formatBaht(paySummary.obligation)}
@@ -572,7 +580,7 @@ export function VehicleDetailClient({
               <tbody>
                 {vehicle.purchasePayments.map((p) => (
                   <tr key={p.id} className="border-b border-slate-100">
-                    <td className="px-3 py-2">{p.date}</td>
+                    <td className="px-3 py-2">{formatDateThBE(p.date)}</td>
                     <td className="px-3 py-2 tabular-nums">฿{formatBaht(Number(p.amount) || 0)}</td>
                     <td className="px-3 py-2 text-xs text-slate-600">
                       {p.billNo
@@ -710,7 +718,7 @@ export function VehicleDetailClient({
               const partner = l.entityId ? entities.find((e) => e.id === l.entityId) : null;
               return (
                 <tr key={l.id} className="border-b border-slate-100">
-                  <td className="px-3 py-2">{l.date}</td>
+                  <td className="px-3 py-2">{formatDateThBE(l.date)}</td>
                   <td className="px-3 py-2">{COST_CATEGORY_LABELS[l.category] ?? l.category}</td>
                   <td className="px-3 py-2">
                     {l.description}

@@ -269,6 +269,9 @@ export async function addVehicleCostLineClient(
   line: Omit<VehicleCostLine, "id" | "createdAt">,
   opts?: {
     postCashbook?: boolean;
+    /** ยอดตัดบัญชีจริงหลังหัก ณ ที่จ่าย — ไม่ระบุ = ใช้ยอดต้นทุน − withholdingAmount */
+    cashOutAmount?: number | null;
+    withholdingAmount?: number | null;
     withholdingDocumentNumber?: string | null;
     paymentVoucherDocumentNumber?: string | null;
   },
@@ -296,9 +299,14 @@ export async function addVehicleCostLineClient(
   const saved = await updateVehicleFieldsClient(vehicleId, { costLines });
   if (!saved.ok) return saved;
 
-  const amt = Number(String(newLine.amount).replace(/,/g, "")) || 0;
+  const gross = Number(String(newLine.amount).replace(/,/g, "")) || 0;
+  const whtAmt = Math.max(0, Number(opts?.withholdingAmount) || 0);
+  const cashOut =
+    opts?.cashOutAmount != null && Number.isFinite(Number(opts.cashOutAmount))
+      ? Math.max(0, Number(opts.cashOutAmount))
+      : Math.max(0, gross - whtAmt);
   let cashbookEntryId: string | null = null;
-  if (opts?.postCashbook && amt > 0) {
+  if (opts?.postCashbook && cashOut > 0) {
     const primary = await ensurePrimaryBankAccount();
     const entryType =
       newLine.category === "LABOR"
@@ -307,12 +315,16 @@ export async function addVehicleCostLineClient(
           ? "PARTS"
           : "MISC";
     const billHint = newLine.billNo ? ` บิล ${newLine.billNo}` : "";
+    const whtHint =
+      whtAmt > 0
+        ? ` (หัก ณ ที่จ่าย ${whtAmt.toLocaleString("th-TH", { minimumFractionDigits: 2 })} · จ่ายสุทธิ ${cashOut.toLocaleString("th-TH", { minimumFractionDigits: 2 })})`
+        : "";
     const cash = await postCashbookEntryClient({
       entryDate: newLine.date,
       direction: "OUT",
       entryType,
-      amount: amt,
-      description: `ต้นทุนรถ: ${newLine.description || newLine.category}${billHint}`,
+      amount: cashOut,
+      description: `ต้นทุนรถ: ${newLine.description || newLine.category}${billHint}${whtHint}`,
       vehicleId,
       entityId: newLine.entityId,
       channel: "BANK",

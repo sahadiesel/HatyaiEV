@@ -95,6 +95,8 @@ export function CommercialDocumentForm({
   );
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [assignNumber, setAssignNumber] = useState(!initial?.id && !documentId);
+  const [includeSignature, setIncludeSignature] = useState(true);
+  const [includeStamp, setIncludeStamp] = useState(true);
 
   useEffect(() => {
     void listEntitiesClient().then((ents) => {
@@ -210,7 +212,10 @@ export function CommercialDocumentForm({
       }
       const docId = r.id;
       if (assign && docId) {
-        await printDocumentClient(docId, profile?.name);
+        await printDocumentClient(docId, profile?.name, {
+          includeSignature,
+          includeStamp,
+        });
       }
       router.push(`${listHref}/${docId}`);
       router.refresh();
@@ -456,6 +461,27 @@ export function CommercialDocumentForm({
         </label>
       </div>
 
+      <div className="flex flex-wrap items-center gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+        <span className="font-medium text-slate-800">ตัวเลือกพิมพ์:</span>
+        <label className="inline-flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            checked={includeSignature}
+            onChange={(e) => setIncludeSignature(e.target.checked)}
+          />
+          ลายเซ็น
+        </label>
+        <label className="inline-flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            checked={includeStamp}
+            onChange={(e) => setIncludeStamp(e.target.checked)}
+          />
+          ตรายาง
+        </label>
+        <span className="text-xs text-slate-500">ติ๊กเฉพาะรายการที่ต้องการใส่ตอนพิมพ์</span>
+      </div>
+
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
@@ -468,6 +494,9 @@ export function CommercialDocumentForm({
         {(saved?.id || documentId) && (
           <DocumentPrintLink
             documentId={saved?.id || documentId!}
+            showOptions={false}
+            includeSignature={includeSignature}
+            includeStamp={includeStamp}
             className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
           />
         )}

@@ -12,6 +12,7 @@ import {
   listLegalDocsClient,
 } from "@/lib/legal-documents-client";
 import type { LegalDocKind, LegalDocRecord } from "@/lib/domain-types";
+import { formatDateThBE } from "@/lib/format-date-th";
 
 export type LegalDocEditMode = "purchase" | "vehicle-sale" | "none";
 
@@ -105,7 +106,7 @@ export function LegalDocsListClient({
               return (
                 <tr key={r.id} className="border-b border-slate-100">
                   <td className="px-3 py-2 font-mono text-xs">{r.number || "—"}</td>
-                  <td className="px-3 py-2">{r.issueDate || "—"}</td>
+                  <td className="px-3 py-2">{formatDateThBE(r.issueDate)}</td>
                   <td className="px-3 py-2">
                     {Number(r.amount || 0).toLocaleString("th-TH", {
                       minimumFractionDigits: 2,

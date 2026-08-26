@@ -1,14 +1,12 @@
 "use client";
 
-import {
-  savePaymentVoucherClient,
-  saveWithholdingDocumentClient,
-} from "@/lib/documents-client";
+import { getDocumentClient, savePaymentVoucherClient } from "@/lib/documents-client";
 import { calcWithholdingTotals, withholdingVatRatePercent } from "@/lib/documents/calc";
 import type { EntityRecord, VehicleCostCategory } from "@/lib/domain-types";
 import {
   defaultPaymentVoucherMeta,
-  defaultWithholdingMeta,
+  parseMetaJson,
+  type PaymentVoucherMeta,
 } from "@/lib/documents/types";
 
 export type CostExpenseDocsResult = {
@@ -17,9 +15,13 @@ export type CostExpenseDocsResult = {
   withholdingDocumentNumber: string | null;
   paymentVoucherDocumentId: string | null;
   paymentVoucherDocumentNumber: string | null;
+  /** ยอดหัก ณ ที่จ่าย (บาท) — 0 ถ้าไม่มี */
+  withholdingAmount: number;
+  /** ยอดที่ต้องตัดบัญชีจริง = ยอดต้นทุน − หัก ณ ที่จ่าย */
+  cashOutAmount: number;
 };
 
-/** สร้างเอกสารตามประเภทต้นทุน — ค่าแรง: หัก ณ ที่จ่าย + ใบสำคัญจ่าย / อะไหล่: ใบสำคัญจ่ายเมื่อไม่มีบิล */
+/** สร้างเอกสารตามประเภทต้นทุน — ค่าแรง: ใบสำคัญจ่าย (+ สร้างหัก ณ ที่จ่ายอัตโนมัติ) / อะไหล่: ใบสำคัญจ่ายเมื่อไม่มีบิล */
 export async function createDocsForVehicleCostExpense(opts: {
   category: VehicleCostCategory;
   amount: string | number;
@@ -48,45 +50,22 @@ export async function createDocsForVehicleCostExpense(opts: {
   let withholdingDocumentNumber: string | null = null;
   let paymentVoucherDocumentId: string | null = null;
   let paymentVoucherDocumentNumber: string | null = null;
+  let withholdingAmount = 0;
 
   if (isLabor && opts.entity) {
     const whtRate = opts.entity.defaultWhtPercent || "3";
-    const whtMeta = {
-      ...defaultWithholdingMeta(),
-      payeeName: opts.entity.name,
-      payeeTaxId: opts.entity.taxId,
-      payeeAddress: opts.entity.address,
-      payeeBranchHeadOffice: opts.entity.branchHeadOffice !== false,
-      payeeBranchNo: opts.entity.branchNo || "",
-      payeeEntityKind:
-        opts.entity.entityKind === "COMPANY" ? ("COMPANY" as const) : ("INDIVIDUAL" as const),
-      vatRatePercent: opts.entity.entityKind === "COMPANY" ? "7" : "0",
-      incomeTypeLabel: "ค่าจ้างทำของ / ค่าแรง",
-      jobDescription: opts.description || `ค่าแรง — ${opts.vehicleLabel}`,
-      withholdingTaxRatePercent: whtRate,
-      withholdingTaxBase: String(amountNum),
-      paymentDate: opts.date,
-      paymentMethod: "TRANSFER" as const,
-      referenceNo: opts.vehicleLabel,
-    };
-    const wht = await saveWithholdingDocumentClient({
-      contractorId: opts.entity.id,
-      issueDate: opts.date,
-      metaJson: JSON.stringify(whtMeta),
-      assignNumber: true,
-      issuedByName: opts.issuedByName,
-      notes: `จากต้นทุนรถ ${opts.vehicleLabel}`,
-    });
-    if (!wht.ok) return wht;
-    withholdingDocumentId = wht.id;
-    withholdingDocumentNumber = wht.number;
-
     const whtTotals = calcWithholdingTotals({
       base: amountNum,
-      vatRatePercent: withholdingVatRatePercent(whtMeta),
+      vatRatePercent: withholdingVatRatePercent({
+        payeeEntityKind:
+          opts.entity.entityKind === "COMPANY" ? "COMPANY" : "INDIVIDUAL",
+        vatRatePercent: opts.entity.entityKind === "COMPANY" ? "7" : "0",
+      }),
       whtRatePercent: Number(whtRate) || 0,
     });
+    withholdingAmount = whtTotals.withholdingAmount;
 
+    // ใบสำคัญจ่ายเป็นต้นทาง — ติ๊กหัก ณ ที่จ่าย → savePaymentVoucherClient สร้างใบหักให้อัตโนมัติ
     const pvMeta = {
       ...defaultPaymentVoucherMeta(),
       payeeName: opts.entity.name,
@@ -97,7 +76,7 @@ export async function createDocsForVehicleCostExpense(opts: {
       purpose: opts.description || `จ่ายค่าแรง — ${opts.vehicleLabel}`,
       vehicleId: opts.vehicleId,
       vehicleLabel: opts.vehicleLabel,
-      withholdingDocumentNumber: withholdingDocumentNumber || undefined,
+      withholdingEnabled: true,
       withholdingTaxRatePercent: whtRate,
       withholdingTaxBase: String(amountNum),
       withholdingAmount: String(whtTotals.withholdingAmount),
@@ -109,13 +88,23 @@ export async function createDocsForVehicleCostExpense(opts: {
       assignNumber: true,
       issuedByName: opts.issuedByName,
       postCashbook: false,
-      notes: withholdingDocumentNumber
-        ? `อ้างอิงหัก ณ ที่จ่าย ${withholdingDocumentNumber}`
-        : `จากต้นทุนรถ ${opts.vehicleLabel}`,
+      notes: `จากต้นทุนรถ ${opts.vehicleLabel}`,
     });
     if (!pv.ok) return pv;
     paymentVoucherDocumentId = pv.id;
     paymentVoucherDocumentNumber = pv.number;
+    withholdingDocumentId = pv.withholdingDocumentId;
+    withholdingDocumentNumber = pv.withholdingDocumentNumber;
+
+    // sync ยอดหักจากเอกสารที่บันทึกแล้ว (กันกรณีคำนวณต่างกันเล็กน้อย)
+    if (pv.id) {
+      const fresh = await getDocumentClient(pv.id);
+      if (fresh) {
+        const m = parseMetaJson<PaymentVoucherMeta>(fresh.metaJson, defaultPaymentVoucherMeta());
+        const amt = Number(String(m.withholdingAmount ?? fresh.withholdingAmount).replace(/,/g, "")) || 0;
+        if (amt > 0) withholdingAmount = amt;
+      }
+    }
   } else if (isParts && !billNo && opts.createPaymentVoucher) {
     if (!opts.entity) {
       return { ok: false, message: "สร้างใบสำคัญจ่ายต้องเลือกคู่ค้า" };
@@ -130,6 +119,7 @@ export async function createDocsForVehicleCostExpense(opts: {
       purpose: opts.description || `จ่ายค่าอะไหล่ — ${opts.vehicleLabel}`,
       vehicleId: opts.vehicleId,
       vehicleLabel: opts.vehicleLabel,
+      withholdingEnabled: false,
     };
     const pv = await savePaymentVoucherClient({
       issueDate: opts.date,
@@ -145,11 +135,15 @@ export async function createDocsForVehicleCostExpense(opts: {
     paymentVoucherDocumentNumber = pv.number;
   }
 
+  const cashOutAmount = Math.max(0, amountNum - withholdingAmount);
+
   return {
     ok: true,
     withholdingDocumentId,
     withholdingDocumentNumber,
     paymentVoucherDocumentId,
     paymentVoucherDocumentNumber,
+    withholdingAmount,
+    cashOutAmount,
   };
 }

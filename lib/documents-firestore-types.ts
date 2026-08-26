@@ -29,4 +29,7 @@ export type DocumentWriteInput = Omit<DocumentRecord, "id" | "number"> & {
 export type DocumentListItem = DocumentRecord & {
   clientName: string | null;
   contractorName: string | null;
+  /** เลขที่ใบเสร็จที่อ้างอิงใบกำกับนี้ (เฉพาะ TAX_INVOICE) */
+  receiptNumber?: string | null;
+  receiptId?: string | null;
 };

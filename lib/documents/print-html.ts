@@ -38,16 +38,41 @@ function logoImgHtml(logoUrl: string): string {
   return `<img src="${esc(logoUrl)}" alt="Hatyai EV" referrerpolicy="no-referrer"/>`;
 }
 
+export type DocumentPrintAssetOptions = {
+  /** ใส่ลายเซ็นบริษัทตอนพิมพ์ (ค่าเริ่มต้น true) */
+  includeSignature?: boolean;
+  /** ใส่ตรายางบริษัทตอนพิมพ์ (ค่าเริ่มต้น true) */
+  includeStamp?: boolean;
+};
+
+export function normalizePrintAssetOptions(
+  opts?: DocumentPrintAssetOptions,
+): { includeSignature: boolean; includeStamp: boolean } {
+  return {
+    includeSignature: opts?.includeSignature !== false,
+    includeStamp: opts?.includeStamp !== false,
+  };
+}
+
 export const DOCUMENT_PRINT_CSS = `
 @page { size: A4 portrait; margin: 12mm; }
 * { box-sizing: border-box; }
 body { font-family: "Sarabun", "Tahoma", sans-serif; font-size: 11pt; color: #111; margin: 0; }
 .doc { border: 2px solid #111; padding: 10px 12px; min-height: 260mm; display: flex; flex-direction: column; }
-.hdr { display: flex; gap: 12px; align-items: flex-start; border-bottom: 2px solid #111; padding-bottom: 8px; margin-bottom: 8px; }
-.logo { width: 120px; flex-shrink: 0; }
-.logo img { max-width: 150px; max-height: 88px; object-fit: contain; }
-.co { flex: 1; font-size: 10pt; line-height: 1.35; }
-.co strong { font-size: 11pt; }
+/* หัวเอกสาร: โลโก้ซ้าย · ชื่อ/ที่อยู่บริษัทชิดขวา ไม่ทับกัน */
+.hdr {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 16px;
+  align-items: start;
+  border-bottom: 2px solid #111;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+}
+.logo { width: 150px; }
+.logo img { max-width: 140px; max-height: 88px; object-fit: contain; display: block; }
+.co { text-align: right; font-size: 10pt; line-height: 1.4; }
+.co strong { display: block; font-size: 12pt; color: #1d4ed8; margin-bottom: 2px; }
 .title { text-align: center; margin: 6px 0 10px; }
 .title h1 { margin: 0; font-size: 18pt; }
 .title .en { color: #1d4ed8; font-size: 13pt; font-weight: bold; margin-top: 2px; }
@@ -71,10 +96,19 @@ table.items th { background: #f1f5f9; text-align: center; }
 .wht-grid .row { display: grid; grid-template-columns: 140px 1fr; gap: 4px; margin: 3px 0; }
 .wht-section { border: 1px solid #111; padding: 8px; margin: 6px 0; }
 .sign-block { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 28px; font-size: 10pt; text-align: center; }
-.sign-cell { position: relative; min-height: 110px; }
-.sign-assets { position: relative; height: 72px; margin-bottom: 4px; }
-.sign-assets .stamp { position: absolute; left: 50%; top: 0; transform: translateX(-50%); max-height: 70px; max-width: 90px; opacity: 0.85; }
-.sign-assets .sig { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); max-height: 48px; max-width: 140px; }
+.sign-cell { position: relative; min-height: 120px; }
+/* ตรายางกับลายเซ็นแยกกัน — ไม่ซ้อนทับ */
+.sign-assets {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 10px;
+  min-height: 72px;
+  margin-bottom: 4px;
+}
+.sign-assets .stamp { position: static; max-height: 64px; max-width: 72px; opacity: 0.9; }
+.sign-assets .sig { position: static; max-height: 52px; max-width: 140px; }
 .sign-line { border-top: 1px solid #111; padding-top: 6px; margin-top: 4px; }
 @media print { .no-print { display: none !important; } }
 `;
@@ -85,16 +119,23 @@ export function companySignBlockHtml(opts: {
   leftLabel?: string;
   rightLabel?: string;
   companyName?: string;
+  includeSignature?: boolean;
+  includeStamp?: boolean;
 }): string {
   const leftLabel = opts.leftLabel ?? "ผู้รับเอกสาร";
   const rightLabel = opts.rightLabel ?? "ผู้มีอำนาจลงนาม";
-  const stamp = opts.stampUrl
-    ? `<img class="stamp" src="${esc(opts.stampUrl)}" alt="stamp"/>`
+  const assets = normalizePrintAssetOptions(opts);
+  const stamp =
+    assets.includeStamp && opts.stampUrl
+      ? `<img class="stamp" src="${esc(opts.stampUrl)}" alt="stamp"/>`
+      : "";
+  const sig =
+    assets.includeSignature && opts.signatureUrl
+      ? `<img class="sig" src="${esc(opts.signatureUrl)}" alt="signature"/>`
+      : "";
+  const company = opts.companyName
+    ? `<div style="font-size:9pt;margin-top:2px">${esc(opts.companyName)}</div>`
     : "";
-  const sig = opts.signatureUrl
-    ? `<img class="sig" src="${esc(opts.signatureUrl)}" alt="signature"/>`
-    : "";
-  const company = opts.companyName ? `<div style="font-size:9pt;margin-top:2px">${esc(opts.companyName)}</div>` : "";
 
   return `<div class="sign-block">
     <div class="sign-cell">
@@ -120,9 +161,12 @@ export function buildCommercialPrintHtml(opts: {
   totalAmount: number;
   notes: string;
   issuedByName?: string;
+  includeSignature?: boolean;
+  includeStamp?: boolean;
 }): string {
   const route = DOCUMENT_KIND_ROUTES[opts.kind];
   const m = opts.meta;
+  const assets = normalizePrintAssetOptions(opts);
   const lineRows = opts.lines
     .filter((l) => l.description.trim() || parseNum(l.amount) > 0)
     .map(
@@ -138,11 +182,21 @@ export function buildCommercialPrintHtml(opts: {
     .join("");
 
   const payMethod = m.paymentMethod ?? "TRANSFER";
+  const chequeDetail =
+    payMethod === "CHEQUE"
+      ? [
+          m.chequeBankName ? `ธนาคาร ${m.chequeBankName}` : "",
+          m.chequeNo ? `เลขที่ ${m.chequeNo}` : "",
+          m.chequeDate ? `วันที่ ${m.chequeDate}` : "",
+        ]
+          .filter(Boolean)
+          .join(" · ")
+      : "";
   const payBlock =
     opts.kind === "RECEIPT"
       ? `<div class="pay-chk">
       <div>การรับเงินจะสมบูรณ์ เมื่อบริษัทฯ ได้รับเงินเรียบร้อยแล้วเท่านั้น</div>
-      <div>${payMethod === "CASH" ? "☑" : "☐"} เงินสด &nbsp; ${payMethod === "TRANSFER" ? "☑" : "☐"} โอน ธนาคาร &nbsp; ${payMethod === "CHEQUE" ? "☑" : "☐"} เช็ค เลขที่/วันที่ ${esc(m.chequeNo ?? "")} ${esc(m.chequeDate ?? "")}</div>
+      <div>${payMethod === "CASH" ? "☑" : "☐"} เงินสด &nbsp; ${payMethod === "TRANSFER" ? "☑" : "☐"} โอน ธนาคาร &nbsp; ${payMethod === "CHEQUE" ? "☑" : "☐"} เช็ค${chequeDetail ? ` ${esc(chequeDetail)}` : ""}</div>
     </div>`
       : opts.kind === "INVOICE"
         ? `<div class="pay-chk">
@@ -156,16 +210,23 @@ export function buildCommercialPrintHtml(opts: {
     ? "☑ สำนักงานใหญ่ ☐ สาขา"
     : `☐ สำนักงานใหญ่ ☑ สาขา ${esc(m.counterpartyBranchNo)}`;
 
+  const totalsRows =
+    opts.kind === "RECEIPT"
+      ? `<tr><td class="lbl">รวม Total</td><td class="val">${fmt(opts.totalAmount)}</td></tr>
+      <tr><td class="lbl"><strong>เป็นเงินทั้งสิ้น Grand Total</strong></td><td class="val"><strong>${fmt(opts.totalAmount)}</strong></td></tr>`
+      : `<tr><td class="lbl">รวม Total</td><td class="val">${fmt(opts.subtotal)}</td></tr>
+      <tr><td class="lbl">ภาษีมูลค่าเพิ่ม ${m.vatRatePercent ?? 7}%</td><td class="val">${fmt(opts.vatAmount)}</td></tr>
+      <tr><td class="lbl"><strong>เป็นเงินทั้งสิ้น Grand Total</strong></td><td class="val"><strong>${fmt(opts.totalAmount)}</strong></td></tr>`;
+
   return `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"/><title>${esc(opts.number || route.titleTh)}</title>
 <style>${DOCUMENT_PRINT_CSS}</style></head><body>
 <div class="doc">
   <div class="hdr">
     <div class="logo">${logoImgHtml(opts.company.logoUrl)}</div>
     <div class="co">
-      <strong>${esc(opts.company.companyName)}</strong><br/>
+      <strong>${esc(opts.company.companyName)}</strong>
       ${esc(opts.company.address).replace(/\n/g, "<br/>")}<br/>
-      โทร. ${esc(opts.company.phone)}<br/>
-      เลขประจำตัวผู้เสียภาษี ${esc(opts.company.taxId)}
+      โทร. ${esc(opts.company.phone)} · เลขประจำตัวผู้เสียภาษี ${esc(opts.company.taxId)}
     </div>
   </div>
   <div class="title">
@@ -199,9 +260,7 @@ export function buildCommercialPrintHtml(opts: {
   <div class="footer">
     <div>${payBlock}<div class="words">Grand Total in Word: ${esc(amountToThaiBahtText(opts.totalAmount))}</div></div>
     <div class="totals"><table>
-      <tr><td class="lbl">รวม Total</td><td class="val">${fmt(opts.subtotal)}</td></tr>
-      <tr><td class="lbl">ภาษีมูลค่าเพิ่ม ${m.vatRatePercent ?? 7}%</td><td class="val">${fmt(opts.vatAmount)}</td></tr>
-      <tr><td class="lbl"><strong>เป็นเงินทั้งสิ้น Grand Total</strong></td><td class="val"><strong>${fmt(opts.totalAmount)}</strong></td></tr>
+      ${totalsRows}
     </table></div>
   </div>
   ${docFooterHtml(opts.issuedByName ?? m.issuedByName)}
@@ -211,13 +270,194 @@ export function buildCommercialPrintHtml(opts: {
     companyName: opts.company.companyName,
     leftLabel: "ผู้รับเอกสาร / ลูกค้า",
     rightLabel: "ผู้มีอำนาจลงนาม",
+    includeSignature: assets.includeSignature,
+    includeStamp: assets.includeStamp,
   })}
 </div>
 <script>window.onload=function(){window.print();}</script>
 </body></html>`;
 }
 
-/** หนังสือรับรองหัก ณ ที่จ่าย — เราเป็นผู้หัก ผู้รับเหมาเป็นผู้ถูกหัก (แนว OPEC ม.50 ทวิ) */
+/** ฉบับพิมพ์หนังสือรับรองหัก ณ ที่จ่าย — ตามแบบ OPEC ม.50 ทวิ */
+export type HyevWhtCopyVariant =
+  | "COPY_PAYEE_TAX_RETURN"
+  | "COPY_PAYEE_RECORD"
+  | "COPY_PAYER_RECORD";
+
+const HYEV_WHT_COPY_VARIANTS: HyevWhtCopyVariant[] = [
+  "COPY_PAYEE_TAX_RETURN",
+  "COPY_PAYEE_RECORD",
+  "COPY_PAYER_RECORD",
+];
+
+function whtCopyBannerTh(v: HyevWhtCopyVariant): string {
+  switch (v) {
+    case "COPY_PAYEE_TAX_RETURN":
+      return "ฉบับที่ 1 สำหรับผู้ถูกหักภาษี ณ ที่จ่าย ใช้แนบแบบแสดงรายการภาษี";
+    case "COPY_PAYEE_RECORD":
+      return "ฉบับที่ 2 สำหรับผู้ถูกหักภาษี ณ ที่จ่าย เก็บไว้เป็นหลักฐาน";
+    case "COPY_PAYER_RECORD":
+      return "สำเนาสำหรับผู้หักภาษี ณ ที่จ่าย เก็บไว้เป็นหลักฐาน";
+    default:
+      return "";
+  }
+}
+
+function paymentMethodLabelTh(method: string): string {
+  if (method === "CASH") return "เงินสด";
+  if (method === "CHEQUE") return "เช็ค";
+  if (method === "TRANSFER") return "โอนเงิน";
+  return method || "อื่น ๆ";
+}
+
+function whtIncomeTypeChecks(label: string): string {
+  const t = label.trim();
+  const goods =
+    /ค่าจ้างทำของ|ค่าแรง|ทำของ/i.test(t) && !/บริการ|เหมา/i.test(t);
+  const service = /ค่าจ้างเหมา|ค่าบริการ|บริการ|เหมา/i.test(t);
+  const other = !goods && !service && Boolean(t);
+  const bothLabor = /ค่าจ้างทำของ.*ค่าแรง|ค่าแรง.*ค่าบริการ|ค่าจ้างทำของ\s*\/\s*ค่า/i.test(t);
+  const g = goods || bothLabor || (!service && !other && /ค่าจ้างทำของ|ค่าแรง/i.test(t));
+  const s = service || bothLabor;
+  return `${g ? "☑" : "☐"} ค่าจ้างทำของ / ค่าแรง &nbsp; ${s ? "☑" : "☐"} ค่าจ้างเหมา / ค่าบริการ${
+    other ? ` &nbsp; ☑ อื่น ๆ (${esc(t)})` : ""
+  }`;
+}
+
+function buildWithholdingCopyPageHtml(opts: {
+  company: CompanyBrand;
+  number: string;
+  issueDate: Date;
+  meta: WithholdingDocumentMeta;
+  subtotal: number;
+  vatAmount: number;
+  totalAmount: number;
+  withholdingAmount: number;
+  issuedByName?: string;
+  includeSignature?: boolean;
+  includeStamp?: boolean;
+  copyVariant: HyevWhtCopyVariant;
+}): string {
+  const m = opts.meta;
+  const assets = normalizePrintAssetOptions(opts);
+  const base = parseNum(m.withholdingTaxBase) || opts.subtotal;
+  const rate = parseNum(m.withholdingTaxRatePercent) || 0;
+  const wht = opts.withholdingAmount || (base * rate) / 100;
+  const forceNoVat =
+    m.payeeEntityKind === "INDIVIDUAL" ||
+    String(m.vatRatePercent ?? "") === "0" ||
+    m.payeeEntityKind !== "COMPANY";
+  const vatAmount = forceNoVat ? 0 : opts.vatAmount;
+  const showVat = !forceNoVat && vatAmount > 0;
+  const amountBeforeVat = base;
+  const gross = showVat ? opts.totalAmount || base + vatAmount : base;
+  const net = Math.max(0, gross - wht);
+  const payDate = m.paymentDate
+    ? formatDateThaiBE(new Date(m.paymentDate))
+    : formatDateThaiBE(opts.issueDate);
+  const issueDateDisp = formatDateThaiBE(opts.issueDate);
+  const payeeIsIndividual = m.payeeEntityKind === "INDIVIDUAL";
+  const payeeIsHead = m.payeeBranchHeadOffice !== false;
+  const payeeCategory = payeeIsIndividual ? "บุคคลธรรมดา" : "นิติบุคคล (ในประเทศ)";
+  const incomeLabel = m.incomeTypeLabel || "ค่าจ้างทำของ / ค่าแรง";
+  const banner = whtCopyBannerTh(opts.copyVariant);
+  const whtWords = amountToThaiBahtText(wht);
+  const stamp =
+    assets.includeStamp && opts.company.stampUrl
+      ? `<img class="wht-sign-img" src="${esc(opts.company.stampUrl)}" alt="stamp"/>`
+      : "";
+  const sig =
+    assets.includeSignature && opts.company.signatureUrl
+      ? `<img class="wht-sign-img" src="${esc(opts.company.signatureUrl)}" alt="signature"/>`
+      : "";
+  const issuedBy = (opts.issuedByName ?? m.issuedByName ?? "").trim() || "—";
+
+  return `<div class="wht-print-page">
+  <div class="copy-banner">${esc(banner)}</div>
+  <div class="hdr">
+    <div class="logo">${logoImgHtml(opts.company.logoUrl)}</div>
+    <div class="co">
+      <strong>${esc(opts.company.companyName)}</strong>
+      ${esc(opts.company.address).replace(/\n/g, "<br/>")}<br/>
+      โทร. ${esc(opts.company.phone)} · เลขประจำตัวผู้เสียภาษี ${esc(opts.company.taxId)}
+    </div>
+  </div>
+  <div class="doc-top">
+    <div class="doc-title-wrap">
+      <h1>หนังสือรับรองการหักภาษี ณ ที่จ่าย</h1>
+      <p class="sub">ตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร</p>
+    </div>
+    <div class="doc-meta">
+      <div><strong>เลขที่</strong> ${esc(opts.number || "—")}</div>
+      <div><strong>วันที่ออกหนังสือรับรอง</strong><br/>${esc(issueDateDisp)}</div>
+      <div><strong>วันที่จ่ายเงิน</strong><br/>${esc(payDate)}</div>
+    </div>
+  </div>
+
+  <div class="sec">1. ผู้มีหน้าที่หักภาษี ณ ที่จ่าย</div>
+  <div class="field">ชื่อบริษัท/ห้าง: ${esc(opts.company.companyName)}</div>
+  <div class="field">เลขประจำตัวผู้เสียภาษี: ${esc(opts.company.taxId)}</div>
+  <div class="field">ประเภทผู้เสียภาษี: นิติบุคคล</div>
+  <div class="field">ที่อยู่: ${esc(opts.company.address)}</div>
+  ${opts.company.phone || opts.company.email ? `<div class="field">โทรศัพท์ / อีเมล: ${esc([opts.company.phone, opts.company.email].filter(Boolean).join(" · "))}</div>` : ""}
+  <div class="field">สาขา: ☑ สำนักงานใหญ่ &nbsp; ☐ สาขาเลขที่ __________</div>
+
+  <div class="sec">2. ผู้ถูกหักภาษี ณ ที่จ่าย / คู่ค้า / ผู้รับจ้าง</div>
+  <div class="field">ชื่อบุคคล/บริษัท/ห้าง: ${esc(m.payeeName || "—")}</div>
+  <div class="field">เลขประจำตัวผู้เสียภาษี: ${esc(m.payeeTaxId || "—")}</div>
+  <div class="field">ประเภทคู่ค้า: ${esc(payeeCategory)}</div>
+  <div class="field">ที่อยู่: ${esc(m.payeeAddress || "—")}</div>
+  ${
+    payeeIsIndividual
+      ? ""
+      : `<div class="field">สาขา: ${payeeIsHead ? "☑" : "☐"} สำนักงานใหญ่ &nbsp; ${payeeIsHead ? "☐" : "☑"} สาขาเลขที่ ${esc(!payeeIsHead && m.payeeBranchNo ? m.payeeBranchNo : "__________")}</div>`
+  }
+
+  <div class="sec">3. รายละเอียดการจ่ายเงิน</div>
+  <div class="field">ประเภทเงินได้: ${whtIncomeTypeChecks(incomeLabel)}</div>
+  <div class="field">รายละเอียดงาน / บริการ: ${esc(m.jobDescription || "—")}</div>
+  <div class="field">วิธีชำระเงิน: ${esc(paymentMethodLabelTh(m.paymentMethod))}</div>
+  ${m.referenceNo ? `<div class="field">อ้างอิง / เลขที่อ้างอิง: ${esc(m.referenceNo)}</div>` : ""}
+
+  <table class="amounts" aria-label="ยอดเงิน">
+    <tr><td>${showVat ? "จำนวนเงินค่าจ้างก่อน VAT" : "จำนวนเงินที่จ่าย (ฐานหัก)"}</td><td>${fmt(amountBeforeVat)} บาท</td></tr>
+    ${showVat ? `<tr><td>VAT 7%</td><td>${fmt(vatAmount)} บาท</td></tr>` : ""}
+    ${showVat ? `<tr><td><strong>ยอดรวม (รวม VAT)</strong></td><td><strong>${fmt(gross)} บาท</strong></td></tr>` : ""}
+    <tr><td>ฐานภาษีหัก ณ ที่จ่าย</td><td>${fmt(base)} บาท</td></tr>
+    <tr><td>อัตราภาษีหัก ณ ที่จ่าย ${esc(String(rate))} % เป็นเงินที่หักไว้</td><td>${fmt(wht)} บาท</td></tr>
+    <tr><td><strong>ยอดเงินสุทธิที่จ่ายให้คู่ค้า</strong></td><td><strong>${fmt(net)} บาท</strong></td></tr>
+  </table>
+
+  <div class="field">ตัวอักษรจำนวนภาษีที่หักไว้: ${esc(whtWords)}</div>
+
+  <div class="sec">4. เงื่อนไขการหักภาษี</div>
+  <div class="checkbox-row">☑ หัก ณ ที่จ่าย</div>
+  <div class="checkbox-row">☐ ออกภาษีให้ตลอดไป</div>
+  <div class="checkbox-row">☐ ออกภาษีให้ครั้งเดียว</div>
+  <div class="checkbox-row">☐ อื่น ๆ: _____________________________</div>
+
+  <div class="sec">5. ผู้จ่ายเงิน / ผู้รับรอง</div>
+  <div class="certify-block">ข้าพเจ้าขอรับรองว่า ข้อความและตัวเลขข้างต้นถูกต้องตรงตามความเป็นจริงทุกประการ</div>
+  <div class="sign-grid">
+    <div class="sign-cell">
+      <div class="sign-space"></div>
+      <div class="sign-line">ผู้ถูกหักภาษี ณ ที่จ่าย</div>
+      <div class="muted">${esc(m.payeeName || "")}</div>
+    </div>
+    <div class="sign-cell">
+      <div class="sign-space">${stamp}${sig}</div>
+      <div class="sign-line">ผู้มีหน้าที่หักภาษี ณ ที่จ่าย</div>
+      <div class="muted">${esc(opts.company.companyName)}</div>
+    </div>
+  </div>
+
+  <p class="footer-sys">
+    เอกสารออกโดยระบบ HYEV โดย ${esc(issuedBy)}
+  </p>
+</div>`;
+}
+
+/** หนังสือรับรองหัก ณ ที่จ่าย — รูปแบบ OPEC ม.50 ทวิ (ฉบับผู้ถูกหัก 1–2 + สำเนาผู้หัก) */
 export function buildWithholdingPrintHtml(opts: {
   company: CompanyBrand;
   number: string;
@@ -228,90 +468,105 @@ export function buildWithholdingPrintHtml(opts: {
   totalAmount: number;
   withholdingAmount: number;
   issuedByName?: string;
+  includeSignature?: boolean;
+  includeStamp?: boolean;
+  /** ค่าเริ่มต้นพิมพ์ครบ 3 ฉบับตามแบบ OPEC */
+  copies?: HyevWhtCopyVariant[];
 }): string {
-  const m = opts.meta;
-  const base = parseNum(m.withholdingTaxBase) || opts.subtotal;
-  const rate = parseNum(m.withholdingTaxRatePercent) || 0;
-  const wht = opts.withholdingAmount || (base * rate) / 100;
-  /** บุคคลธรรมดา / ไม่ระบุว่าเป็นบริษัท → ไม่มี VAT 7% */
-  const forceNoVat =
-    m.payeeEntityKind === "INDIVIDUAL" ||
-    String(m.vatRatePercent ?? "") === "0" ||
-    m.payeeEntityKind !== "COMPANY";
-  const vatAmount = forceNoVat ? 0 : opts.vatAmount;
-  const showVat = !forceNoVat && vatAmount > 0;
-  const gross = showVat ? opts.totalAmount || base + vatAmount : base;
-  const net = gross - wht;
-  const payeeBranch =
-    m.payeeEntityKind === "INDIVIDUAL"
-      ? ""
-      : m.payeeBranchHeadOffice
-        ? "☑ สำนักงานใหญ่"
-        : `☑ สาขา ${esc(m.payeeBranchNo)}`;
+  const variants = opts.copies?.length ? opts.copies : HYEV_WHT_COPY_VARIANTS;
+  const pages = variants
+    .map((copyVariant) => buildWithholdingCopyPageHtml({ ...opts, copyVariant }))
+    .join("\n");
 
   return `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"/><title>${esc(opts.number || "หัก ณ ที่จ่าย")}</title>
-<style>${DOCUMENT_PRINT_CSS}</style></head><body>
-<div class="doc">
-  <div class="title" style="border-bottom:2px solid #111;padding-bottom:10px;margin-bottom:10px">
-    <h1 style="font-size:16pt;line-height:1.35">หนังสือรับรองการหักภาษี ณ ที่จ่าย</h1>
-    <div style="font-size:11pt;margin-top:4px;font-weight:600">ตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร</div>
-  </div>
-  <div class="wht-section">
-    <div class="wht-grid">
-      <div class="row"><span>เลขที่:</span><span><strong>${esc(opts.number || "—")}</strong></span></div>
-      <div class="row"><span>วันที่:</span><span>${esc(formatDateThaiBE(opts.issueDate))}</span></div>
-    </div>
-  </div>
-  <div class="wht-section">
-    <strong>ผู้มีหน้าที่หักภาษี ณ ที่จ่าย (ผู้ว่าจ้าง)</strong>
-    <div class="wht-grid">
-      <div class="row"><span>ชื่อ:</span><span>${esc(opts.company.companyName)}</span></div>
-      <div class="row"><span>เลขประจำตัวผู้เสียภาษี:</span><span>${esc(opts.company.taxId)}</span></div>
-      <div class="row"><span>ที่อยู่:</span><span>${esc(opts.company.address)}</span></div>
-    </div>
-  </div>
-  <div class="wht-section">
-    <strong>ผู้ถูกหักภาษี ณ ที่จ่าย (ผู้รับเหมา)</strong>
-    <div class="wht-grid">
-      <div class="row"><span>ชื่อ:</span><span>${esc(m.payeeName)}</span></div>
-      <div class="row"><span>เลขประจำตัวผู้เสียภาษี:</span><span>${esc(m.payeeTaxId)}${payeeBranch ? ` ${payeeBranch}` : ""}</span></div>
-      <div class="row"><span>ที่อยู่:</span><span>${esc(m.payeeAddress)}</span></div>
-    </div>
-  </div>
-  <div class="wht-section">
-    <strong>รายการเงินได้ที่จ่าย</strong>
-    <div class="wht-grid">
-      <div class="row"><span>ประเภทเงินได้:</span><span>☑ ${esc(m.incomeTypeLabel)}</span></div>
-      <div class="row"><span>รายละเอียด:</span><span>${esc(m.jobDescription)}</span></div>
-      <div class="row"><span>${showVat ? "มูลค่าก่อน VAT:" : "จำนวนเงิน:"}</span><span>${fmt(base)} บาท</span></div>
-      ${showVat ? `<div class="row"><span>VAT 7%:</span><span>${fmt(vatAmount)} บาท</span></div>` : ""}
-      ${showVat ? `<div class="row"><span>จำนวนเงินที่จ่าย:</span><span>${fmt(gross)} บาท</span></div>` : ""}
-      <div class="row"><span>หัก ณ ที่จ่าย ${rate}%:</span><span><strong>${fmt(wht)} บาท</strong></span></div>
-      <div class="row"><span>เงินที่จ่ายสุทธิ:</span><span>${fmt(net)} บาท</span></div>
-      <div class="row"><span>วันที่จ่าย:</span><span>${esc(m.paymentDate ? formatDateThaiBE(new Date(m.paymentDate)) : formatDateThaiBE(opts.issueDate))}</span></div>
-      <div class="row"><span>อ้างอิง:</span><span>${esc(m.referenceNo)}</span></div>
-    </div>
-    <div class="words" style="margin-top:8px">☑ หัก ณ ที่จ่าย &nbsp; ☐ ออกภาษีให้ตลอดไป &nbsp; ☐ ออกภาษีให้ครั้งเดียว</div>
-    <div class="words">${esc(amountToThaiBahtText(wht))}</div>
-  </div>
-  ${docFooterHtml(opts.issuedByName ?? m.issuedByName)}
-  ${companySignBlockHtml({
-    signatureUrl: opts.company.signatureUrl,
-    stampUrl: undefined,
-    companyName: opts.company.companyName,
-    leftLabel: "ผู้ถูกหักภาษี",
-    rightLabel: "ผู้มีหน้าที่หักภาษี",
-  })}
-</div>
+<style>
+@page { size: A4; margin: 10mm 12mm; }
+* { box-sizing: border-box; }
+body {
+  font-family: "Sarabun", "TH Sarabun New", "Tahoma", sans-serif;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #111;
+  margin: 0;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.copy-banner {
+  text-align: center;
+  font-weight: bold;
+  font-size: 11px;
+  border: 1px solid #333;
+  padding: 5px 8px;
+  margin-bottom: 8px;
+  background: #fafafa;
+}
+.hdr {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 12px;
+  align-items: start;
+  border-bottom: 1.5px solid #111;
+  padding-bottom: 6px;
+  margin-bottom: 10px;
+}
+.logo img { max-width: 100px; max-height: 64px; object-fit: contain; display: block; }
+.co { text-align: right; font-size: 10px; line-height: 1.35; }
+.co strong { display: block; font-size: 12px; color: #1d4ed8; margin-bottom: 2px; }
+.doc-top { position: relative; margin-bottom: 12px; min-height: 72px; }
+.doc-title-wrap { text-align: center; padding: 0 150px; }
+.doc-title-wrap h1 { font-size: 14px; margin: 0 0 2px; font-weight: bold; }
+.doc-title-wrap .sub { font-size: 11px; margin: 0; color: #222; }
+.doc-meta {
+  position: absolute;
+  top: 0;
+  right: 0;
+  text-align: right;
+  font-size: 10.5px;
+  line-height: 1.45;
+  max-width: 210px;
+}
+.doc-meta div { margin-bottom: 4px; }
+.sec {
+  margin-top: 10px;
+  font-weight: bold;
+  border-bottom: 1px solid #333;
+  padding-bottom: 1px;
+  margin-bottom: 4px;
+  font-size: 11.5px;
+}
+.field { margin: 2px 0 3px; font-size: 10.5px; }
+.muted { color: #444; font-size: 10px; }
+table.amounts { width: 100%; border-collapse: collapse; margin: 4px 0; font-size: 10.5px; }
+table.amounts td { padding: 2px 5px; vertical-align: top; }
+table.amounts td:last-child { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.checkbox-row { margin: 3px 0; font-size: 10.5px; }
+.certify-block { margin-top: 6px; font-size: 10.5px; }
+.sign-grid { display: table; width: 100%; margin-top: 14px; }
+.sign-cell { display: table-cell; width: 50%; vertical-align: top; padding: 0 10px; text-align: center; font-size: 10.5px; }
+.sign-space { min-height: 64px; display: flex; align-items: flex-end; justify-content: center; gap: 8px; }
+.wht-sign-img { max-height: 56px; max-width: 120px; object-fit: contain; }
+.sign-line { border-top: 1px solid #111; padding-top: 6px; margin-top: 4px; font-weight: 600; }
+.footer-sys {
+  margin-top: 12px;
+  padding-top: 6px;
+  border-top: 1px solid #ddd;
+  font-size: 10px;
+  color: #333;
+  text-align: right;
+}
+.wht-print-page {
+  page-break-after: always;
+  break-after: page;
+}
+.wht-print-page:last-of-type {
+  page-break-after: auto;
+  break-after: auto;
+}
+@media print { .no-print { display: none !important; } }
+</style></head><body>
+${pages}
 <script>window.onload=function(){window.print();}</script>
 </body></html>`;
-}
-
-function paymentMethodLabelTh(method: string): string {
-  if (method === "CASH") return "เงินสด";
-  if (method === "CHEQUE") return "เช็ค";
-  if (method === "TRANSFER") return "โอนเงิน";
-  return method;
 }
 
 function resolvePvWithholding(meta: import("./types").PaymentVoucherMeta, notes: string) {
@@ -333,8 +588,11 @@ function buildPaymentVoucherCopyHtml(opts: {
   notes: string;
   issuedByName?: string;
   copyLabel: string;
+  includeSignature?: boolean;
+  includeStamp?: boolean;
 }): string {
   const m = opts.meta;
+  const assets = normalizePrintAssetOptions(opts);
   const wht = resolvePvWithholding(m, opts.notes);
   const grossBase = wht.base > 0 ? wht.base : opts.totalAmount;
   const netPay = wht.whtAmt > 0 ? Math.max(0, opts.totalAmount - wht.whtAmt) : opts.totalAmount;
@@ -352,16 +610,21 @@ function buildPaymentVoucherCopyHtml(opts: {
       </div>`
     : "";
 
-  const sig = opts.company.signatureUrl
-    ? `<img src="${esc(opts.company.signatureUrl)}" alt="sig" class="pv-sig"/>`
-    : "";
+  const stamp =
+    assets.includeStamp && opts.company.stampUrl
+      ? `<img src="${esc(opts.company.stampUrl)}" alt="stamp" class="pv-stamp"/>`
+      : "";
+  const sig =
+    assets.includeSignature && opts.company.signatureUrl
+      ? `<img src="${esc(opts.company.signatureUrl)}" alt="sig" class="pv-sig"/>`
+      : "";
 
   return `<section class="pv-copy">
   <div class="pv-copy-badge">${esc(opts.copyLabel)}</div>
   <div class="hdr">
     <div class="logo">${logoImgHtml(opts.company.logoUrl)}</div>
     <div class="co">
-      <strong>${esc(opts.company.companyName)}</strong><br/>
+      <strong>${esc(opts.company.companyName)}</strong>
       ${esc(opts.company.address).replace(/\n/g, "<br/>")}<br/>
       โทร. ${esc(opts.company.phone)} · เลขประจำตัวผู้เสียภาษี ${esc(opts.company.taxId)}
     </div>
@@ -392,7 +655,7 @@ function buildPaymentVoucherCopyHtml(opts: {
       <div class="pv-sign-line">ผู้จัดทำ</div>
     </div>
     <div class="pv-sign-cell">
-      <div class="pv-sign-space">${sig}</div>
+      <div class="pv-sign-space">${stamp}${sig}</div>
       <div class="pv-sign-line">ผู้อนุมัติ</div>
     </div>
   </div>
@@ -408,9 +671,17 @@ export function buildPaymentVoucherPrintHtml(opts: {
   totalAmount: number;
   notes: string;
   issuedByName?: string;
+  includeSignature?: boolean;
+  includeStamp?: boolean;
 }): string {
   const issuedByName = opts.issuedByName ?? opts.meta.issuedByName;
-  const copyOpts = { ...opts, issuedByName };
+  const assets = normalizePrintAssetOptions(opts);
+  const copyOpts = {
+    ...opts,
+    issuedByName,
+    includeSignature: assets.includeSignature,
+    includeStamp: assets.includeStamp,
+  };
   const original = buildPaymentVoucherCopyHtml({ ...copyOpts, copyLabel: "ต้นฉบับ" });
   const duplicate = buildPaymentVoucherCopyHtml({ ...copyOpts, copyLabel: "สำเนา" });
 
@@ -455,14 +726,19 @@ body {
   background: #fff; z-index: 1;
 }
 .pv-copy .hdr {
-  display: flex; gap: 8px; align-items: flex-start;
-  border-bottom: 1.5px solid #111; padding-bottom: 3px; margin-bottom: 2px;
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 8px;
+  align-items: start;
+  border-bottom: 1.5px solid #111;
+  padding-bottom: 3px;
+  margin-bottom: 2px;
   padding-right: 52px;
 }
-.pv-copy .logo { width: 56px; flex-shrink: 0; }
-.pv-copy .logo img { max-width: 56px; max-height: 40px; object-fit: contain; }
-.pv-copy .co { flex: 1; font-size: 7.5pt; line-height: 1.25; }
-.pv-copy .co strong { font-size: 9pt; }
+.pv-copy .logo { width: 56px; }
+.pv-copy .logo img { max-width: 56px; max-height: 40px; object-fit: contain; display: block; }
+.pv-copy .co { text-align: right; font-size: 7.5pt; line-height: 1.25; }
+.pv-copy .co strong { display: block; font-size: 9pt; color: #1d4ed8; margin-bottom: 1px; }
 .pv-copy .title { text-align: center; margin: 1px 0 3px; }
 .pv-copy .title h1 { margin: 0; font-size: 12pt; line-height: 1.2; }
 .pv-copy .title .en { color: #1d4ed8; font-size: 9pt; font-weight: bold; margin-top: 0; }
@@ -483,11 +759,17 @@ body {
   display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
   margin-top: auto; padding-top: 4px; text-align: center; font-size: 8pt;
 }
-.pv-sign-space { position: relative; height: 28px; margin-bottom: 1px; }
-.pv-sig {
-  position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
-  max-height: 26px; max-width: 90px;
+.pv-sign-space {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  margin-bottom: 1px;
 }
+.pv-stamp { max-height: 28px; max-width: 36px; opacity: 0.9; }
+.pv-sig { max-height: 26px; max-width: 90px; }
 .pv-sign-line { border-top: 1px solid #111; padding-top: 2px; }
 .pv-foot { text-align: right; font-size: 7pt; color: #444; margin-top: 2px; }
 .pv-cut {

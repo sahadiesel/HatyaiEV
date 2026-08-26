@@ -138,7 +138,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div className="min-w-0 flex-1">
-        <main className="mx-auto max-w-5xl px-6 py-8">
+        <main
+          className={
+            pathname.startsWith("/documents") ||
+            pathname.startsWith("/contracts") ||
+            pathname.startsWith("/cashbook") ||
+            pathname.startsWith("/settings/bank-accounts")
+              ? "mx-auto w-full max-w-[96rem] px-6 py-8"
+              : "mx-auto max-w-5xl px-6 py-8"
+          }
+        >
           {viewOnly && (
             <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
               คุณมีสิทธิ์ดูอย่างเดียวในหน้านี้ — ไม่สามารถแก้ไขข้อมูลได้

@@ -121,10 +121,26 @@ export async function buildReceiptInitialFromTaxInvoice(taxInvoiceId: string) {
     return { ok: false as const, message: "ไม่พบใบกำกับภาษี" };
   }
   const meta = parseMetaJson<CommercialDocumentMeta>(inv.metaJson, defaultCommercialMeta());
+  const invDate = inv.issueDate.toISOString().slice(0, 10);
+  const invDateTh = inv.issueDate.toLocaleDateString("th-TH", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+  const total = Number(inv.totalAmount) || 0;
+  const desc = `ได้รับเงินจากใบกำกับภาษี เลขที่ ${inv.number || "—"} วันที่ ${invDateTh}`;
   const receiptMeta: CommercialDocumentMeta = {
     ...meta,
     taxInvoiceId: inv.id,
     taxInvoiceNumber: inv.number || undefined,
+    taxInvoiceDate: invDate,
+    paymentMethod: meta.paymentMethod || "TRANSFER",
+    vatRatePercent: 0,
+    vatScheme: "STANDARD",
+    withholdingEnabled: false,
+    withholdingTaxRatePercent: "3",
+    withholdingTaxBase: String(total),
+    withholdingAmount: "0",
   };
   return {
     ok: true as const,
@@ -133,11 +149,68 @@ export async function buildReceiptInitialFromTaxInvoice(taxInvoiceId: string) {
       number: "",
       issueDate: new Date().toISOString().slice(0, 10),
       clientId: inv.clientId,
-      lines: JSON.parse(inv.linesJson || "[]"),
+      lines: [
+        {
+          sequence: 1,
+          code: "",
+          description: desc,
+          unitPrice: String(total),
+          quantity: "1",
+          amount: String(total),
+        },
+      ],
       meta: receiptMeta,
       notes: inv.number
         ? `อ้างอิงใบกำกับภาษี ${inv.number}${inv.notes ? ` · ${inv.notes}` : ""}`
         : inv.notes || "",
+      invoiceTotal: total,
+      invoiceNumber: inv.number || "",
+      invoiceDate: invDate,
     },
   };
+}
+
+/** ใบกำกับภาษีที่ยังไม่มีใบเสร็จอ้างอิง */
+export async function listOpenTaxInvoicesForReceipt(): Promise<
+  {
+    id: string;
+    number: string;
+    issueDate: string;
+    totalAmount: string;
+    counterpartyName: string;
+    clientId: string | null;
+  }[]
+> {
+  const [taxInvoices, receipts] = await Promise.all([
+    listDocumentsClient("TAX_INVOICE"),
+    listDocumentsClient("RECEIPT"),
+  ]);
+  const used = new Set<string>();
+  for (const r of receipts) {
+    try {
+      const m = JSON.parse(r.metaJson || "{}") as { taxInvoiceId?: string };
+      if (m.taxInvoiceId) used.add(m.taxInvoiceId);
+    } catch {
+      /* ignore */
+    }
+  }
+  return taxInvoices
+    .filter((t) => t.number && !used.has(t.id))
+    .map((t) => {
+      let counterpartyName = "";
+      try {
+        const m = JSON.parse(t.metaJson || "{}") as { counterpartyName?: string };
+        counterpartyName = m.counterpartyName || t.clientName || "";
+      } catch {
+        counterpartyName = t.clientName || "";
+      }
+      return {
+        id: t.id,
+        number: t.number,
+        issueDate: t.issueDate.toISOString().slice(0, 10),
+        totalAmount: String(t.totalAmount),
+        counterpartyName,
+        clientId: t.clientId,
+      };
+    });
 }
