@@ -188,7 +188,8 @@ export type CashbookEntryType =
   | "LABOR"
   | "MISC"
   | "PURCHASE_DEPOSIT"
-  | "SALE_DEPOSIT";
+  | "SALE_DEPOSIT"
+  | "TRANSFER";
 
 export type CashbookEntry = {
   id: string;
@@ -228,8 +229,12 @@ export type CashSettings = {
   updatedAt?: string;
 };
 
+export type BankAccountKind = "CASH" | "BANK";
+
 export type BankAccountRecord = {
   id: string;
+  /** เงินสด หรือบัญชีธนาคาร */
+  kind: BankAccountKind;
   accountName: string;
   bankName: string;
   accountNumber: string;

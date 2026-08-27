@@ -95,8 +95,8 @@ export function CommercialDocumentForm({
   );
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [assignNumber, setAssignNumber] = useState(!initial?.id && !documentId);
-  const [includeSignature, setIncludeSignature] = useState(true);
-  const [includeStamp, setIncludeStamp] = useState(true);
+  const [includeSignature, setIncludeSignature] = useState(false);
+  const [includeStamp, setIncludeStamp] = useState(false);
 
   useEffect(() => {
     void listEntitiesClient().then((ents) => {
@@ -217,7 +217,7 @@ export function CommercialDocumentForm({
           includeStamp,
         });
       }
-      router.push(`${listHref}/${docId}`);
+      router.push(listHref);
       router.refresh();
     });
   }

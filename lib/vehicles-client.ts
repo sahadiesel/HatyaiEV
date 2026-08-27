@@ -20,6 +20,7 @@ import {
 } from "@/lib/documents/types";
 import { savePaymentVoucherClient } from "@/lib/documents-client";
 import type {
+  CashChannel,
   EntityRecord,
   VehicleCostLine,
   VehiclePurchasePayment,
@@ -59,7 +60,7 @@ function parseCostLines(raw: unknown): VehicleCostLine[] {
         ? String(row.paymentVoucherDocumentId)
         : null,
       cashbookEntryId: row.cashbookEntryId ? String(row.cashbookEntryId) : null,
-      createdAt: row.createdAt ? String(row.createdAt) : undefined,
+      createdAt: row.createdAt ? String(row.createdAt) : "",
     };
   });
 }
@@ -80,10 +81,25 @@ function parsePurchasePayments(raw: unknown): VehiclePurchasePayment[] {
         ? String(row.paymentVoucherDocumentNumber)
         : null,
       cashbookEntryId: row.cashbookEntryId ? String(row.cashbookEntryId) : null,
-      notes: row.notes ? String(row.notes) : undefined,
-      createdAt: row.createdAt ? String(row.createdAt) : undefined,
+      notes: row.notes ? String(row.notes) : "",
+      createdAt: row.createdAt ? String(row.createdAt) : "",
     };
   });
+}
+
+/** Firestore ห้าม undefined — ตัดฟิลด์ที่เป็น undefined ออกก่อนเขียน */
+function omitUndefinedDeep<T>(value: T): T {
+  if (value === undefined) return null as T;
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => omitUndefinedDeep(item)) as T;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (v === undefined) continue;
+    out[k] = omitUndefinedDeep(v);
+  }
+  return out as T;
 }
 
 export function parseVehicleRecord(id: string, d: Record<string, unknown>): VehicleRecord {
@@ -217,7 +233,7 @@ export async function saveVehicleClient(
     };
 
     const payload: Record<string, unknown> = {
-      ...record,
+      ...omitUndefinedDeep(record),
       updatedAt: serverTimestamp(),
     };
     if (!prev) payload.createdAt = serverTimestamp();
@@ -255,7 +271,7 @@ export async function updateVehicleFieldsClient(
   try {
     await setDoc(
       doc(db, firestoreCollections.vehicles, id),
-      { ...patch, updatedAt: serverTimestamp() },
+      { ...omitUndefinedDeep(patch), updatedAt: serverTimestamp() },
       { merge: true },
     );
     return { ok: true };
@@ -381,6 +397,9 @@ export type PurchasePaymentInput = {
   createPaymentVoucher?: boolean;
   notes?: string;
   issuedByName?: string;
+  /** ช่องทางตัดบัญชี — เงินสด / ธนาคาร */
+  channel?: CashChannel;
+  bankAccountId?: string | null;
 };
 
 /** บันทึกจ่ายค่าซื้อรถทีละงวด → ตัด cashbook ตามยอดจ่าย + บิลหรือใบสำคัญจ่าย */
@@ -420,6 +439,17 @@ export async function addVehiclePurchasePaymentClient(
   const vehicleLabel =
     `${existing.code || ""} ${existing.brand} ${existing.model} ${existing.licensePlate || ""}`.trim();
 
+  const channel: CashChannel = input.channel === "CASH" ? "CASH" : "BANK";
+  let bankAccountId: string | null =
+    input.bankAccountId?.trim() ? input.bankAccountId.trim() : null;
+  if (channel === "BANK" && !bankAccountId) {
+    const primary = await ensurePrimaryBankAccount();
+    bankAccountId = primary?.id || null;
+  }
+  if (channel === "CASH" && !bankAccountId) {
+    bankAccountId = null;
+  }
+
   let paymentVoucherDocumentId: string | null = null;
   let paymentVoucherDocumentNumber: string | null = null;
 
@@ -430,7 +460,7 @@ export async function addVehiclePurchasePaymentClient(
       payeeAddress: seller.address,
       payeeTaxId: seller.taxId,
       payeePhone: seller.phone,
-      paymentMethod: "TRANSFER" as const,
+      paymentMethod: channel === "CASH" ? ("CASH" as const) : ("TRANSFER" as const),
       purpose: `จ่ายค่าซื้อรถ — ${vehicleLabel}`,
       vehicleId: existing.id,
       vehicleLabel,
@@ -449,7 +479,6 @@ export async function addVehiclePurchasePaymentClient(
     paymentVoucherDocumentNumber = pv.number;
   }
 
-  const primary = await ensurePrimaryBankAccount();
   const billHint = billNo ? ` บิล ${billNo}` : "";
   const cash = await postCashbookEntryClient({
     entryDate: date,
@@ -459,8 +488,8 @@ export async function addVehiclePurchasePaymentClient(
     description: `จ่ายค่าซื้อรถ: ${vehicleLabel}${billHint}`.trim(),
     vehicleId,
     entityId: existing.sellerEntityId,
-    channel: "BANK",
-    bankAccountId: primary?.id ?? null,
+    channel,
+    bankAccountId,
     vatType: existing.purchaseType === "INDIVIDUAL_NO_VAT" ? "NO_VAT" : "FULL_VAT",
     billNo: billNo || null,
     documentId: paymentVoucherDocumentId,
@@ -479,7 +508,7 @@ export async function addVehiclePurchasePaymentClient(
     paymentVoucherDocumentId,
     paymentVoucherDocumentNumber,
     cashbookEntryId: cash.id,
-    notes: input.notes ?? "",
+    notes: input.notes?.trim() || "",
     createdAt: new Date().toISOString(),
   };
   const purchasePayments = [...(existing.purchasePayments ?? []), payment];

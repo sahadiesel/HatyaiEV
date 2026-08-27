@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { listEntitiesClient } from "@/lib/entities-client";
 import { buildHireContractHtml } from "@/lib/documents/contract-print";
@@ -35,6 +36,7 @@ function fromEntity(e: EntityRecord): ContractPartySnapshot {
 }
 
 export function HireContractForm() {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [entities, setEntities] = useState<EntityRecord[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
@@ -156,6 +158,8 @@ export function HireContractForm() {
       openPrintHtml(await buildHtml());
       setMsgOk(true);
       setMsg(`บันทึกแล้ว (${res.number}) และเปิดหน้าพิมพ์`);
+      router.push("/documents/hire-contract");
+      router.refresh();
     });
   }
 

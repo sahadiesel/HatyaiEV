@@ -70,8 +70,9 @@ function normalizeEntryDate(raw: unknown): string {
 }
 
 export function parseCashbookEntryClient(id: string, d: Record<string, unknown>): CashbookEntry {
+  const channelRaw = String(d.channel ?? "").toUpperCase();
   const channel: CashChannel =
-    d.channel === "BANK" || d.bankAccountId ? "BANK" : "CASH";
+    channelRaw === "BANK" ? "BANK" : channelRaw === "CASH" ? "CASH" : d.bankAccountId ? "BANK" : "CASH";
   return {
     id,
     entryNo: String(d.entryNo ?? ""),
@@ -175,6 +176,10 @@ export async function postCashbookEntryClient(
     const id = newId();
     const channel: CashChannel =
       input.channel ?? (input.bankAccountId ? "BANK" : "CASH");
+    const bankAccountId =
+      input.bankAccountId && String(input.bankAccountId).trim()
+        ? String(input.bankAccountId).trim()
+        : null;
 
     const row: CashbookEntry = {
       id,
@@ -195,7 +200,7 @@ export async function postCashbookEntryClient(
       vehicleId: input.vehicleId ?? null,
       entityId: input.entityId ?? null,
       channel,
-      bankAccountId: channel === "BANK" ? (input.bankAccountId ?? null) : null,
+      bankAccountId,
       taxBasisAmount:
         input.taxBasisAmount != null && input.taxBasisAmount !== ""
           ? roundMoney2(parseAmount(input.taxBasisAmount)).toFixed(2)
@@ -267,7 +272,9 @@ export async function syncCashbookForDocumentClient(
       const primary = await ensurePrimaryBankAccount();
       bankAccountId = primary?.id ?? null;
     }
-    if (patch.channel === "CASH") bankAccountId = null;
+    if (patch.channel === "CASH" && bankAccountId === undefined) {
+      bankAccountId = null;
+    }
 
     const ymd = patch.entryDate ? toYmdLocal(patch.entryDate) : null;
     const amountStr =
@@ -325,10 +332,11 @@ export function calcBalancesFromEntries(
   const bankNet: Record<string, number> = {};
   for (const b of banks) bankNet[b.id] = parseAmount(b.openingBalance);
 
+  const banksOnly = banks.filter((b) => b.kind !== "CASH");
   const primary =
-    banks.find((b) => b.isPrimary) ||
-    banks.find((b) => b.accountNumber.includes("215")) ||
-    banks[0];
+    banksOnly.find((b) => b.isPrimary) ||
+    banksOnly.find((b) => b.accountNumber.includes("215")) ||
+    banksOnly[0];
 
   for (const e of entries) {
     const amt = parseAmount(e.amount);
@@ -338,7 +346,10 @@ export function calcBalancesFromEntries(
     if (e.channel === "BANK") {
       // ถ้า id หาย/ไม่ตรงบัญชีหลัก ให้ลงที่ยอดบัญชีหลัก
       let bankId = e.bankAccountId;
-      if (!bankId || !(banks.some((b) => b.id === bankId) || bankId in bankNet)) {
+      const known =
+        bankId &&
+        (banksOnly.some((b) => b.id === bankId) || bankId in bankNet);
+      if (!bankId || !known) {
         bankId = primary?.id ?? bankId;
       }
       if (bankId) {
@@ -350,8 +361,18 @@ export function calcBalancesFromEntries(
         cashOut += amt;
       }
     } else {
-      if (e.direction === "IN") cashIn += amt;
-      else cashOut += amt;
+      // เงินสดหน้าร้าน หรือกระเป๋าเงินสดที่มีชื่อ (kind=CASH + bankAccountId)
+      const cashPotId = e.bankAccountId;
+      const cashPot =
+        cashPotId && banks.find((b) => b.id === cashPotId && b.kind === "CASH");
+      if (cashPot && cashPotId) {
+        if (!(cashPotId in bankNet)) bankNet[cashPotId] = 0;
+        bankNet[cashPotId] += e.direction === "IN" ? amt : -amt;
+      } else if (e.direction === "IN") {
+        cashIn += amt;
+      } else {
+        cashOut += amt;
+      }
     }
   }
 

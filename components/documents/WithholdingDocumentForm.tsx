@@ -71,8 +71,8 @@ export function WithholdingDocumentForm({
   );
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [assignNumber, setAssignNumber] = useState(!initial?.id && !documentId);
-  const [includeSignature, setIncludeSignature] = useState(true);
-  const [includeStamp, setIncludeStamp] = useState(true);
+  const [includeSignature, setIncludeSignature] = useState(false);
+  const [includeStamp, setIncludeStamp] = useState(false);
 
   useEffect(() => {
     void listEntitiesClient().then((ents) => {
@@ -164,7 +164,7 @@ export function WithholdingDocumentForm({
           includeStamp,
         });
       }
-      router.push(`/documents/withholding/${docId}`);
+      router.push(`/documents/withholding`);
       router.refresh();
     });
   }

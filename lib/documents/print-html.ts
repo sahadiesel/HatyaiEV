@@ -49,8 +49,8 @@ export function normalizePrintAssetOptions(
   opts?: DocumentPrintAssetOptions,
 ): { includeSignature: boolean; includeStamp: boolean } {
   return {
-    includeSignature: opts?.includeSignature !== false,
-    includeStamp: opts?.includeStamp !== false,
+    includeSignature: opts?.includeSignature === true,
+    includeStamp: opts?.includeStamp === true,
   };
 }
 
@@ -620,7 +620,6 @@ function buildPaymentVoucherCopyHtml(opts: {
       : "";
 
   return `<section class="pv-copy">
-  <div class="pv-copy-badge">${esc(opts.copyLabel)}</div>
   <div class="hdr">
     <div class="logo">${logoImgHtml(opts.company.logoUrl)}</div>
     <div class="co">
@@ -629,7 +628,15 @@ function buildPaymentVoucherCopyHtml(opts: {
       โทร. ${esc(opts.company.phone)} · เลขประจำตัวผู้เสียภาษี ${esc(opts.company.taxId)}
     </div>
   </div>
-  <div class="title"><h1>ใบสำคัญจ่าย</h1><div class="en">PAYMENT VOUCHER</div></div>
+  <div class="title">
+    <div class="title-center">
+      <div class="title-main">
+        <h1>ใบสำคัญจ่าย</h1>
+        <div class="en">PAYMENT VOUCHER</div>
+      </div>
+      <div class="pv-copy-badge">${esc(opts.copyLabel)}</div>
+    </div>
+  </div>
   <div class="party">
     <div>
       <div><label>จ่ายให้:</label> ${esc(m.payeeName)}</div>
@@ -721,9 +728,13 @@ body {
   page-break-inside: avoid;
 }
 .pv-copy-badge {
-  position: absolute; top: 4px; right: 8px;
-  border: 1px solid #111; padding: 0 6px; font-size: 8pt; font-weight: 700;
-  background: #fff; z-index: 1;
+  border: 1px solid #111;
+  padding: 1px 8px;
+  font-size: 8pt;
+  font-weight: 700;
+  background: #fff;
+  white-space: nowrap;
+  line-height: 1.3;
 }
 .pv-copy .hdr {
   display: grid;
@@ -733,15 +744,39 @@ body {
   border-bottom: 1.5px solid #111;
   padding-bottom: 3px;
   margin-bottom: 2px;
-  padding-right: 52px;
 }
 .pv-copy .logo { width: 56px; }
 .pv-copy .logo img { max-width: 56px; max-height: 40px; object-fit: contain; display: block; }
-.pv-copy .co { text-align: right; font-size: 7.5pt; line-height: 1.25; }
-.pv-copy .co strong { display: block; font-size: 9pt; color: #1d4ed8; margin-bottom: 1px; }
-.pv-copy .title { text-align: center; margin: 1px 0 3px; }
-.pv-copy .title h1 { margin: 0; font-size: 12pt; line-height: 1.2; }
-.pv-copy .title .en { color: #1d4ed8; font-size: 9pt; font-weight: bold; margin-top: 0; }
+.pv-copy .co {
+  text-align: right;
+  font-size: 7.5pt;
+  line-height: 1.25;
+  width: 100%;
+  margin-left: auto;
+}
+.pv-copy .co strong {
+  display: block;
+  width: 100%;
+  text-align: right;
+  font-size: 9pt;
+  color: #1d4ed8;
+  margin-bottom: 1px;
+}
+.pv-copy .title {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 2px 0 4px;
+}
+.pv-copy .title-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.pv-copy .title-main { text-align: center; }
+.pv-copy .title-main h1 { margin: 0; font-size: 12pt; line-height: 1.2; }
+.pv-copy .title-main .en { color: #1d4ed8; font-size: 9pt; font-weight: bold; margin-top: 0; }
 .pv-copy .party {
   display: grid; grid-template-columns: 1fr 140px; gap: 4px;
   margin-bottom: 2px; font-size: 8pt; line-height: 1.3;

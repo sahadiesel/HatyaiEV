@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { PrintDocIconButton } from "@/components/PrintDocIconButton";
-import { sumBalanceForAccountNumber } from "@/lib/bank-accounts-client";
+import {
+  CASH_ACCOUNT_ID,
+  channelForAccountId,
+  sumBalanceForAccountNumber,
+} from "@/lib/bank-accounts-client";
 import {
   calcBalancesFromEntries,
   deleteCashbookEntryClient,
@@ -15,7 +19,6 @@ import type {
   BankAccountRecord,
   CashbookEntry,
   CashbookEntryType,
-  CashChannel,
   CashVatType,
   EntityRecord,
   VehicleCostCategory,
@@ -49,6 +52,44 @@ function nowParts() {
   return { year: d.getFullYear(), month: d.getMonth() + 1 };
 }
 
+/** สองเดือนล่าสุดในปีปัจจุบัน เช่น ก.ค.–ส.ค. */
+function defaultMonthRange() {
+  const { year, month } = nowParts();
+  return {
+    year,
+    from: month <= 1 ? 1 : month - 1,
+    to: month,
+  };
+}
+
+function monthLabel(m: number): string {
+  return MONTH_OPTIONS.find((x) => x.value === m)?.label ?? String(m);
+}
+
+function matchesAccountFilter(
+  e: CashbookEntry,
+  filterAccountId: string,
+  banks: BankAccountRecord[],
+  primaryId: string | undefined,
+): boolean {
+  if (!filterAccountId) return true;
+  if (filterAccountId === CASH_ACCOUNT_ID) {
+    if (e.channel !== "CASH") return false;
+    if (!e.bankAccountId) return true;
+    const pot = banks.find((b) => b.id === e.bankAccountId);
+    return !pot || pot.kind !== "CASH";
+  }
+  const acc = banks.find((b) => b.id === filterAccountId);
+  if (!acc) return false;
+  if (acc.kind === "CASH") {
+    return e.channel === "CASH" && e.bankAccountId === filterAccountId;
+  }
+  if (e.channel !== "BANK") return false;
+  if (e.bankAccountId === filterAccountId) return true;
+  if (!e.bankAccountId && primaryId === filterAccountId) return true;
+  return false;
+}
+
 const TYPE_LABELS: Record<string, string> = {
   DOCUMENT_AUTO: "จากเอกสารอัตโนมัติ",
   MANUAL: "บันทึกมือ",
@@ -59,6 +100,7 @@ const TYPE_LABELS: Record<string, string> = {
   MISC: "เบ็ดเตล็ด",
   PURCHASE_DEPOSIT: "มัดจำซื้อเข้า",
   SALE_DEPOSIT: "มัดจำขายออก",
+  TRANSFER: "โอนข้ามบัญชี",
 };
 
 function cashbookPrintTargets(e: CashbookEntry): { whtId: string | null; pvId: string | null } {
@@ -88,17 +130,19 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
   const [balance, setBalance] = useState(0);
   const [cashBalance, setCashBalance] = useState(0);
   const [bankBalances, setBankBalances] = useState<Record<string, number>>({});
-  const [channel, setChannel] = useState<CashChannel>("BANK");
-  const [bankAccountId, setBankAccountId] = useState("");
+  /** บัญชีที่ตัดเงิน — เงินสดหน้าร้าน หรือบัญชีจากการตั้งค่า */
+  const [selectedAccountId, setSelectedAccountId] = useState("");
   const [vatType, setVatType] = useState<CashVatType>("NO_VAT");
   const [entities, setEntities] = useState<EntityRecord[]>([]);
   const [direction, setDirection] = useState<"IN" | "OUT">("OUT");
   const [expenseCategory, setExpenseCategory] = useState<VehicleCostCategory | "MISC">("PARTS");
   const [createPvNoBill, setCreatePvNoBill] = useState(false);
-  const initial = nowParts();
-  const [filterYear, setFilterYear] = useState(initial.year);
-  /** 0 = ทุกเดือน */
-  const [filterMonth, setFilterMonth] = useState(0);
+  const initialRange = defaultMonthRange();
+  const [filterYear, setFilterYear] = useState(initialRange.year);
+  const [filterMonthFrom, setFilterMonthFrom] = useState(initialRange.from);
+  const [filterMonthTo, setFilterMonthTo] = useState(initialRange.to);
+  /** "" = ทุกบัญชี, CASH_ACCOUNT_ID = เงินสดหน้าร้าน, หรือ id บัญชีจากตั้งค่า */
+  const [filterAccountId, setFilterAccountId] = useState("");
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 20;
 
@@ -111,8 +155,8 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
     setBalance(data.balance);
     setCashBalance(data.cashBalance);
     setBankBalances(data.bankBalances);
-    if (data.primary && !bankAccountId) setBankAccountId(data.primary.id);
-  }, [bankAccountId]);
+    setSelectedAccountId((prev) => prev || data.primary?.id || CASH_ACCOUNT_ID);
+  }, []);
 
   useEffect(() => {
     void reload();
@@ -150,16 +194,20 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
     return [...years].sort((a, b) => b - a);
   })();
 
+  const monthFrom = Math.min(filterMonthFrom, filterMonthTo);
+  const monthTo = Math.max(filterMonthFrom, filterMonthTo);
+
   const filteredEntries = useMemo(() => {
+    const primaryId = (banks.find((b) => b.isPrimary) || banks[0])?.id;
     return entries.filter((e) => {
       const d = String(e.entryDate ?? "");
       const y = Number(d.slice(0, 4));
       const m = Number(d.slice(5, 7));
       if (y !== filterYear) return false;
-      if (filterMonth === 0) return true;
-      return m === filterMonth;
+      if (!Number.isFinite(m) || m < monthFrom || m > monthTo) return false;
+      return matchesAccountFilter(e, filterAccountId, banks, primaryId);
     });
-  }, [entries, filterYear, filterMonth]);
+  }, [entries, filterYear, monthFrom, monthTo, filterAccountId, banks]);
 
   const totalPages = Math.max(1, Math.ceil(filteredEntries.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -170,7 +218,7 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
 
   useEffect(() => {
     setPage(1);
-  }, [filterYear, filterMonth]);
+  }, [filterYear, filterMonthFrom, filterMonthTo, filterAccountId]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
@@ -199,10 +247,36 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
     [filteredEntries, banks],
   );
 
+  const accountFilterOptions = useMemo(() => {
+    const opts: { id: string; label: string }[] = [
+      { id: "", label: "ทุกบัญชี" },
+      { id: CASH_ACCOUNT_ID, label: "เงินสดหน้าร้าน" },
+    ];
+    for (const b of banks) {
+      if (b.kind === "CASH") {
+        opts.push({ id: b.id, label: `เงินสด · ${b.accountName}` });
+      } else {
+        opts.push({
+          id: b.id,
+          label: `${b.bankName} ${b.accountNumber}${b.isPrimary ? " · หลัก" : ""}`,
+        });
+      }
+    }
+    return opts;
+  }, [banks]);
+
+  const accountPickerOptions = useMemo(
+    () => accountFilterOptions.filter((o) => o.id !== ""),
+    [accountFilterOptions],
+  );
+
   const filterPeriodLabel =
-    filterMonth === 0
-      ? `ทุกเดือน ${filterYear}`
-      : `${MONTH_OPTIONS.find((m) => m.value === filterMonth)?.label ?? ""} ${filterYear}`;
+    monthFrom === monthTo
+      ? `${monthLabel(monthFrom)} ${filterYear}`
+      : `${monthLabel(monthFrom)}–${monthLabel(monthTo)} ${filterYear}`;
+
+  const filterAccountLabel =
+    accountFilterOptions.find((o) => o.id === filterAccountId)?.label ?? "ทุกบัญชี";
 
   function printDoc(documentId: string) {
     startTransition(async () => {
@@ -277,14 +351,20 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
         withholdingAmount > 0
           ? ` (หัก ณ ที่จ่าย ${withholdingAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} · จ่ายสุทธิ ${cashOutAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })})`
           : "";
+      const postChannel = channelForAccountId(selectedAccountId || CASH_ACCOUNT_ID, banks);
+      const postBankId =
+        !selectedAccountId || selectedAccountId === CASH_ACCOUNT_ID
+          ? null
+          : selectedAccountId;
+
       const res = await postCashbookEntryClient({
         entryDate,
         direction: dir,
         entryType,
         amount: cashOutAmount,
         description: `${description}${billHint}${whtHint}`,
-        channel,
-        bankAccountId: channel === "BANK" ? bankAccountId || null : null,
+        channel: postChannel,
+        bankAccountId: postBankId,
         vatType,
         entityId,
         billNo: billNo || null,
@@ -389,13 +469,16 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
             </select>
           </label>
           <label className="text-sm">
-            <span className="mb-1 block text-slate-600">เดือน</span>
+            <span className="mb-1 block text-slate-600">เริ่มต้นเดือน</span>
             <select
-              className={`${inp} min-w-[10rem]`}
-              value={filterMonth}
-              onChange={(e) => setFilterMonth(Number(e.target.value))}
+              className={`${inp} min-w-[9rem]`}
+              value={filterMonthFrom}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setFilterMonthFrom(v);
+                if (v > filterMonthTo) setFilterMonthTo(v);
+              }}
             >
-              <option value={0}>ทุกเดือน</option>
               {MONTH_OPTIONS.map((m) => (
                 <option key={m.value} value={m.value}>
                   {m.label}
@@ -403,9 +486,42 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
               ))}
             </select>
           </label>
+          <label className="text-sm">
+            <span className="mb-1 block text-slate-600">สิ้นสุดเดือน</span>
+            <select
+              className={`${inp} min-w-[9rem]`}
+              value={filterMonthTo}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setFilterMonthTo(v);
+                if (v < filterMonthFrom) setFilterMonthFrom(v);
+              }}
+            >
+              {MONTH_OPTIONS.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm">
+            <span className="mb-1 block text-slate-600">บัญชี</span>
+            <select
+              className={`${inp} min-w-[14rem]`}
+              value={filterAccountId}
+              onChange={(e) => setFilterAccountId(e.target.value)}
+            >
+              {accountFilterOptions.map((o) => (
+                <option key={o.id || "all"} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="pb-2 text-xs text-slate-500">
             <p>
-              แสดง {filteredEntries.length} รายการ ({filterPeriodLabel})
+              แสดง {filteredEntries.length} รายการ ({filterPeriodLabel}
+              {filterAccountId ? ` · ${filterAccountLabel}` : ""})
               {filteredEntries.length > PAGE_SIZE
                 ? ` · หน้า ${safePage}/${totalPages}`
                 : ""}
@@ -413,26 +529,32 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
             {monthsWithData.length > 0 && (
               <p className="mt-1">
                 มีข้อมูล:{" "}
-                {monthsWithData.slice(0, 6).map((row, i) => (
-                  <span key={`${row.year}-${row.month}`}>
-                    {i > 0 ? " · " : ""}
-                    <button
-                      type="button"
-                      className={
-                        row.year === filterYear && row.month === filterMonth
-                          ? "font-semibold text-slate-800 underline"
-                          : "text-blue-700 hover:underline"
-                      }
-                      onClick={() => {
-                        setFilterYear(row.year);
-                        setFilterMonth(row.month);
-                      }}
-                    >
-                      {MONTH_OPTIONS.find((m) => m.value === row.month)?.label} {row.year} (
-                      {row.count})
-                    </button>
-                  </span>
-                ))}
+                {monthsWithData.slice(0, 6).map((row, i) => {
+                  const inRange =
+                    row.year === filterYear &&
+                    row.month >= monthFrom &&
+                    row.month <= monthTo;
+                  return (
+                    <span key={`${row.year}-${row.month}`}>
+                      {i > 0 ? " · " : ""}
+                      <button
+                        type="button"
+                        className={
+                          inRange
+                            ? "font-semibold text-slate-800 underline"
+                            : "text-blue-700 hover:underline"
+                        }
+                        onClick={() => {
+                          setFilterYear(row.year);
+                          setFilterMonthFrom(row.month);
+                          setFilterMonthTo(row.month);
+                        }}
+                      >
+                        {monthLabel(row.month)} {row.year} ({row.count})
+                      </button>
+                    </span>
+                  );
+                })}
               </p>
             )}
           </div>
@@ -548,34 +670,20 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
               </p>
             )}
             <label className="text-sm">
-              <span className="mb-1 block text-slate-600">ช่องทาง</span>
+              <span className="mb-1 block text-slate-600">บัญชี / ช่องทาง</span>
               <select
                 className={inp}
-                value={channel}
-                onChange={(e) => setChannel(e.target.value as CashChannel)}
+                value={selectedAccountId}
+                onChange={(e) => setSelectedAccountId(e.target.value)}
+                required
               >
-                <option value="BANK">บัญชีธนาคาร</option>
-                <option value="CASH">เงินสดหน้าร้าน</option>
+                {accountPickerOptions.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
               </select>
             </label>
-            {channel === "BANK" && (
-              <label className="text-sm">
-                <span className="mb-1 block text-slate-600">บัญชี</span>
-                <select
-                  className={inp}
-                  value={bankAccountId}
-                  onChange={(e) => setBankAccountId(e.target.value)}
-                  required
-                >
-                  <option value="">— เลือกบัญชี —</option>
-                  {banks.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.bankName} {b.accountNumber}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
             <label className="text-sm">
               <span className="mb-1 block text-slate-600">ประเภท VAT</span>
               <select
@@ -644,7 +752,7 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
                     "ยังไม่มีรายการ — ออกใบเสร็จ/ใบสำคัญจ่าย หรือบันทึกรายการด่วน"
                   ) : (
                     <span>
-                      ไม่พบรายการในช่วงที่เลือก — ลองเปลี่ยนเดือนด้านบน
+                      ไม่พบรายการในช่วงที่เลือก — ลองเปลี่ยนเดือนหรือบัญชีด้านบน
                       {monthsWithData[0] && (
                         <>
                           {" "}
@@ -654,11 +762,12 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
                             className="text-blue-700 hover:underline"
                             onClick={() => {
                               setFilterYear(monthsWithData[0].year);
-                              setFilterMonth(monthsWithData[0].month);
+                              setFilterMonthFrom(monthsWithData[0].month);
+                              setFilterMonthTo(monthsWithData[0].month);
+                              setFilterAccountId("");
                             }}
                           >
-                            {MONTH_OPTIONS.find((m) => m.value === monthsWithData[0].month)?.label}{" "}
-                            {monthsWithData[0].year}
+                            {monthLabel(monthsWithData[0].month)} {monthsWithData[0].year}
                           </button>
                         </>
                       )}
@@ -675,7 +784,9 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
                   ? bank
                     ? `${bank.bankName} ${bank.accountNumber}`
                     : "ธนาคาร"
-                  : "เงินสด";
+                  : bank?.kind === "CASH"
+                    ? `เงินสด · ${bank.accountName}`
+                    : "เงินสดหน้าร้าน";
               return (
                 <tr key={e.id} className="border-b border-slate-100">
                   <td className="px-3 py-2 font-mono text-xs">{e.entryNo}</td>

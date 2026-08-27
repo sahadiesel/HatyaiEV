@@ -69,7 +69,6 @@ export function PaymentVoucherForm({
     initial?.issueDate ?? new Date().toISOString().slice(0, 10),
   );
   const [notes, setNotes] = useState(initial?.notes ?? "");
-  const [assignNumber, setAssignNumber] = useState(!initial?.id && !documentId);
   const [savedId, setSavedId] = useState(initial?.id ?? documentId ?? "");
   const [savedNumber, setSavedNumber] = useState(initial?.number ?? "");
   const [entityOptions, setEntityOptions] = useState(entities);
@@ -115,7 +114,6 @@ export function PaymentVoucherForm({
       setNotes(noteText);
       setSavedId(row.id);
       setSavedNumber(row.number || "");
-      setAssignNumber(!row.number);
       setLoadingDoc(false);
     })();
     return () => {
@@ -229,7 +227,7 @@ export function PaymentVoucherForm({
         notes,
         metaJson: JSON.stringify(nextMeta),
         issuedByName: profile?.name ?? "",
-        assignNumber,
+        assignNumber: !savedNumber,
         postCashbook: !wasEdit,
       });
       if (!res.ok) {
@@ -252,6 +250,7 @@ export function PaymentVoucherForm({
           ? `บันทึกการแก้ไขแล้ว — อัปเดตช่องทาง/ยอดในสมุดเงินสดแล้ว${whtHint}`
           : `บันทึกใบสำคัญจ่ายแล้ว — ลงสมุดเงินสดอัตโนมัติ${whtHint}`,
       );
+      router.push("/documents/payment-voucher");
       router.refresh();
     });
   }
@@ -284,11 +283,34 @@ export function PaymentVoucherForm({
       </div>
       {msg && <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{msg}</p>}
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      {/* บรรทัด 1: ชื่อ · วันที่ · เลขผู้เสียภาษี */}
+      <div className="grid gap-3 sm:grid-cols-3">
         <label className="text-sm">
-          <span className="mb-1 block text-slate-600">เลือกผู้รับเงินจาก Entities</span>
-          <select className={inp} defaultValue="" onChange={(e) => onEntity(e.target.value)}>
-            <option value="">— กรอกเอง / เลือก —</option>
+          <span className="mb-1 block text-slate-600">ชื่อผู้รับเงิน</span>
+          <select
+            className={inp}
+            value={
+              entityOptions.find(
+                (e) =>
+                  e.name === meta.payeeName &&
+                  (!meta.payeeTaxId || e.taxId === meta.payeeTaxId),
+              )?.id ??
+              (meta.payeeName ? "__custom__" : "")
+            }
+            onChange={(e) => {
+              const v = e.target.value;
+              if (!v || v === "__custom__") return;
+              onEntity(v);
+            }}
+            required={!meta.payeeName}
+          >
+            <option value="">— เลือกผู้รับเงิน —</option>
+            {meta.payeeName &&
+              !entityOptions.some(
+                (e) =>
+                  e.name === meta.payeeName &&
+                  (!meta.payeeTaxId || e.taxId === meta.payeeTaxId),
+              ) && <option value="__custom__">{meta.payeeName}</option>}
             {entityOptions.map((e) => (
               <option key={e.id} value={e.id}>
                 {e.name}
@@ -301,15 +323,6 @@ export function PaymentVoucherForm({
           <input type="date" className={inp} value={issueDate} onChange={(e) => setIssueDate(e.target.value)} />
         </label>
         <label className="text-sm">
-          <span className="mb-1 block text-slate-600">ชื่อผู้รับเงิน</span>
-          <input
-            className={inp}
-            value={meta.payeeName}
-            onChange={(e) => setMeta((m) => ({ ...m, payeeName: e.target.value }))}
-            required
-          />
-        </label>
-        <label className="text-sm">
           <span className="mb-1 block text-slate-600">เลขผู้เสียภาษี</span>
           <input
             className={inp}
@@ -317,15 +330,21 @@ export function PaymentVoucherForm({
             onChange={(e) => setMeta((m) => ({ ...m, payeeTaxId: e.target.value }))}
           />
         </label>
-        <label className="text-sm sm:col-span-2">
-          <span className="mb-1 block text-slate-600">ที่อยู่</span>
-          <input
-            className={inp}
-            value={meta.payeeAddress}
-            onChange={(e) => setMeta((m) => ({ ...m, payeeAddress: e.target.value }))}
-          />
-        </label>
-        <label className="text-sm sm:col-span-2">
+      </div>
+
+      {/* บรรทัด 2: ที่อยู่ */}
+      <label className="block text-sm">
+        <span className="mb-1 block text-slate-600">ที่อยู่</span>
+        <input
+          className={inp}
+          value={meta.payeeAddress}
+          onChange={(e) => setMeta((m) => ({ ...m, payeeAddress: e.target.value }))}
+        />
+      </label>
+
+      {/* บรรทัด 3: วัตถุประสงค์ · จำนวนเงิน · วิธีจ่าย */}
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
+        <label className="text-sm">
           <span className="mb-1 block text-slate-600">วัตถุประสงค์การจ่าย</span>
           <input
             className={inp}
@@ -360,95 +379,83 @@ export function PaymentVoucherForm({
         </label>
       </div>
 
-      <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3">
-        <label className="flex items-center gap-2 text-sm font-semibold text-amber-950">
-          <input
-            type="checkbox"
-            checked={Boolean(meta.withholdingEnabled)}
-            onChange={(e) => setWhtEnabled(e.target.checked)}
-            disabled={pending}
-          />
-          มีหักภาษี ณ ที่จ่าย
-        </label>
-        <p className="mt-1 text-xs text-amber-900">
-          ติ๊กแล้วระบบจะสร้างใบหัก ณ ที่จ่ายให้อัตโนมัติจากยอดใบสำคัญจ่าย — ยอดตัดบัญชี = จ่ายสุทธิหลังหัก
-        </p>
+      {/* บรรทัด 4: หัก ณ ที่จ่าย · หมายเหตุ */}
+      <div className="grid items-stretch gap-3 sm:grid-cols-2">
+        <div className="flex h-full flex-col rounded-md border border-amber-300 bg-amber-50 px-4 py-3">
+          <label className="flex items-center gap-2 text-sm font-semibold text-amber-950">
+            <input
+              type="checkbox"
+              checked={Boolean(meta.withholdingEnabled)}
+              onChange={(e) => setWhtEnabled(e.target.checked)}
+              disabled={pending}
+            />
+            มีหักภาษี ณ ที่จ่าย
+          </label>
+          <p className="mt-1 text-xs text-amber-900">
+            ติ๊กแล้วระบบจะสร้างใบหัก ณ ที่จ่ายให้อัตโนมัติ — ยอดตัดบัญชี = จ่ายสุทธิหลังหัก
+          </p>
 
-        {meta.withholdingEnabled && (
-          <div className="mt-3 space-y-3">
-            <div className="grid gap-3 sm:grid-cols-3">
-              <label className="text-sm">
-                <span className="mb-1 block text-slate-600">อัตราหัก (%)</span>
-                <input
-                  className={inp}
-                  value={meta.withholdingTaxRatePercent || ""}
-                  onChange={(e) => setWhtRate(e.target.value)}
-                  disabled={pending}
-                />
-              </label>
-              <label className="text-sm">
-                <span className="mb-1 block text-slate-600">มูลค่าฐานหัก</span>
-                <input
-                  className={inp}
-                  value={meta.withholdingTaxBase || ""}
-                  onChange={(e) => setWhtBase(e.target.value)}
-                  disabled={pending}
-                />
-              </label>
-              <label className="text-sm">
-                <span className="mb-1 block text-slate-600">ยอดหัก ณ ที่จ่าย</span>
-                <input className={inp} value={fmt(whtAmt)} readOnly disabled />
-              </label>
+          {meta.withholdingEnabled && (
+            <div className="mt-3 space-y-3">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <label className="text-sm">
+                  <span className="mb-1 block text-slate-600">อัตราหัก (%)</span>
+                  <input
+                    className={inp}
+                    value={meta.withholdingTaxRatePercent || ""}
+                    onChange={(e) => setWhtRate(e.target.value)}
+                    disabled={pending}
+                  />
+                </label>
+                <label className="text-sm">
+                  <span className="mb-1 block text-slate-600">มูลค่าฐานหัก</span>
+                  <input
+                    className={inp}
+                    value={meta.withholdingTaxBase || ""}
+                    onChange={(e) => setWhtBase(e.target.value)}
+                    disabled={pending}
+                  />
+                </label>
+                <label className="text-sm">
+                  <span className="mb-1 block text-slate-600">ยอดหัก ณ ที่จ่าย</span>
+                  <input className={inp} value={fmt(whtAmt)} readOnly disabled />
+                </label>
+              </div>
+              <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm text-slate-800">
+                <div>
+                  <dt className="text-xs text-slate-500">ยอดจ่ายก่อนหัก</dt>
+                  <dd className="tabular-nums font-medium">{fmt(payAmount)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-slate-500">จ่ายสุทธิ (ตัดบัญชี)</dt>
+                  <dd className="tabular-nums font-semibold">{fmt(netPay)}</dd>
+                </div>
+                {wht.whtNo ? (
+                  <div className="col-span-2">
+                    <dt className="text-xs text-slate-500">ใบหักที่สร้างแล้ว</dt>
+                    <dd>
+                      <Link
+                        href="/documents/withholding"
+                        className="font-mono text-xs text-blue-800 hover:underline"
+                      >
+                        {wht.whtNo}
+                      </Link>
+                    </dd>
+                  </div>
+                ) : null}
+              </dl>
             </div>
-            <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm text-slate-800 sm:grid-cols-4">
-              <div>
-                <dt className="text-xs text-slate-500">ยอดจ่ายก่อนหัก</dt>
-                <dd className="tabular-nums font-medium">{fmt(payAmount)}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-slate-500">หัก ณ ที่จ่าย</dt>
-                <dd className="tabular-nums font-medium text-amber-800">{fmt(whtAmt)}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-slate-500">จ่ายสุทธิ (ตัดบัญชี)</dt>
-                <dd className="tabular-nums font-semibold">{fmt(netPay)}</dd>
-              </div>
-              {wht.whtNo ? (
-                <div>
-                  <dt className="text-xs text-slate-500">ใบหักที่สร้างแล้ว</dt>
-                  <dd>
-                    <Link
-                      href="/documents/withholding"
-                      className="font-mono text-xs text-blue-800 hover:underline"
-                    >
-                      {wht.whtNo}
-                    </Link>
-                  </dd>
-                </div>
-              ) : (
-                <div>
-                  <dt className="text-xs text-slate-500">ใบหัก</dt>
-                  <dd className="text-xs text-slate-500">จะสร้างเมื่อบันทึก</dd>
-                </div>
-              )}
-            </dl>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
 
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={assignNumber} onChange={(e) => setAssignNumber(e.target.checked)} />
-        ออกเลขที่เอกสารเมื่อบันทึก
-      </label>
-
-      <label className="block text-sm">
-        <span className="mb-1 block text-slate-600">หมายเหตุ</span>
-        <textarea className={inp} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
-      </label>
-
-      <div className="flex flex-wrap items-center gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-        <span className="font-medium text-slate-800">ตัวเลือกพิมพ์:</span>
-        <span className="text-xs text-slate-500">ติ๊กก่อนกดพิมพ์ด้านล่าง</span>
+        <label className="flex h-full flex-col text-sm">
+          <span className="mb-1 block text-slate-600">หมายเหตุ</span>
+          <textarea
+            className={`${inp} min-h-0 flex-1 resize-none`}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
+        </label>
       </div>
 
       <div className="flex flex-wrap gap-2 items-center">
@@ -463,6 +470,7 @@ export function PaymentVoucherForm({
           <DocumentPrintLink
             documentId={savedId}
             label="พิมพ์ PDF"
+            showOptions={false}
             className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-800 hover:bg-slate-50"
           />
         )}

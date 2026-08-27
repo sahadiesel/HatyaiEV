@@ -3,9 +3,16 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { PrintDocIconButton } from "@/components/PrintDocIconButton";
+import { CASH_ACCOUNT_ID, channelForAccountId, listBankAccountsClient } from "@/lib/bank-accounts-client";
 import { parseAmount } from "@/lib/documents/calc";
 import { printDocumentClient } from "@/lib/documents-client";
-import type { EntityRecord, VehicleCostCategory, VehicleRecord, VehicleStatus } from "@/lib/domain-types";
+import type {
+  BankAccountRecord,
+  EntityRecord,
+  VehicleCostCategory,
+  VehicleRecord,
+  VehicleStatus,
+} from "@/lib/domain-types";
 import { entityHasRoleGroup } from "@/lib/entity-roles";
 import { formatDateThBE } from "@/lib/format-date-th";
 import {
@@ -50,6 +57,8 @@ export function VehicleDetailClient({
   const [costCategory, setCostCategory] = useState<VehicleCostCategory>("PARTS");
   const [createPvNoBill, setCreatePvNoBill] = useState(false);
   const [payCreatePv, setPayCreatePv] = useState(false);
+  const [payAccountId, setPayAccountId] = useState("");
+  const [banks, setBanks] = useState<BankAccountRecord[]>([]);
   const [docPack, setDocPack] = useState<VehicleDocumentPack | null>(null);
 
   function reloadDocPack() {
@@ -60,6 +69,31 @@ export function VehicleDetailClient({
     reloadDocPack();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when vehicle id changes
   }, [vehicle.id]);
+
+  useEffect(() => {
+    void listBankAccountsClient().then((rows) => {
+      setBanks(rows);
+      const primary = rows.find((b) => b.isPrimary && b.kind !== "CASH") || rows.find((b) => b.kind !== "CASH");
+      setPayAccountId((prev) => prev || primary?.id || CASH_ACCOUNT_ID);
+    });
+  }, []);
+
+  const payAccountOptions = useMemo(() => {
+    const opts: { id: string; label: string }[] = [
+      { id: CASH_ACCOUNT_ID, label: "เงินสดหน้าร้าน" },
+    ];
+    for (const b of banks) {
+      if (b.kind === "CASH") {
+        opts.push({ id: b.id, label: `เงินสด · ${b.accountName}` });
+      } else {
+        opts.push({
+          id: b.id,
+          label: `${b.bankName} ${b.accountNumber}${b.isPrimary ? " (หลัก)" : ""}`,
+        });
+      }
+    }
+    return opts;
+  }, [banks]);
 
   const eco = useMemo(
     () =>
@@ -623,11 +657,20 @@ export function VehicleDetailClient({
                   flash(false, "สร้างใบสำคัญจ่ายต้องมีผู้ขาย");
                   return;
                 }
+                if (!payAccountId) {
+                  flash(false, "เลือกบัญชีที่ตัดเงิน");
+                  return;
+                }
+                const channel = channelForAccountId(payAccountId, banks);
+                const bankAccountId =
+                  payAccountId === CASH_ACCOUNT_ID ? null : payAccountId;
                 const res = await addVehiclePurchasePaymentClient(vehicle.id, {
                   date: String(fd.get("date") ?? "") || undefined,
                   amount,
                   billNo,
                   createPaymentVoucher: payCreatePv && !billNo,
+                  channel,
+                  bankAccountId,
                 });
                 if (!res.ok) {
                   flash(false, res.message);
@@ -662,6 +705,21 @@ export function VehicleDetailClient({
                 required
                 placeholder={`สูงสุด ${formatBaht(paySummary.remaining)}`}
               />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-slate-600">ตัดจากบัญชี</span>
+              <select
+                className={inp}
+                value={payAccountId}
+                onChange={(e) => setPayAccountId(e.target.value)}
+                required
+              >
+                {payAccountOptions.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="text-sm">
               <span className="mb-1 block text-slate-600">เลขที่ใบเสร็จ / ใบกำกับ</span>

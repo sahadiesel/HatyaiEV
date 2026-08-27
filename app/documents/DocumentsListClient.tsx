@@ -52,8 +52,8 @@ function RowActions({
 }) {
   const { profile } = useAuth();
   const [pending, startTransition] = useTransition();
-  const [includeSignature, setIncludeSignature] = useState(true);
-  const [includeStamp, setIncludeStamp] = useState(true);
+  const [includeSignature, setIncludeSignature] = useState(false);
+  const [includeStamp, setIncludeStamp] = useState(false);
   const [whtCopies, setWhtCopies] = useState<HyevWhtCopyVariant[]>([
     "COPY_PAYEE_TAX_RETURN",
     "COPY_PAYEE_RECORD",

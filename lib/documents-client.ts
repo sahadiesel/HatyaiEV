@@ -750,8 +750,8 @@ export async function printDocumentClient(
   const totalAmount = Number(docRow.totalAmount);
   const withholdingAmount = Number(docRow.withholdingAmount);
   const assets = {
-    includeSignature: printAssets?.includeSignature !== false,
-    includeStamp: printAssets?.includeStamp !== false,
+    includeSignature: printAssets?.includeSignature === true,
+    includeStamp: printAssets?.includeStamp === true,
   };
 
   let html: string;

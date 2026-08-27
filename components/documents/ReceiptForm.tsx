@@ -83,8 +83,8 @@ export function ReceiptForm({
   const [issueDate, setIssueDate] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState("");
   const [assignNumber, setAssignNumber] = useState(!documentId);
-  const [includeSignature, setIncludeSignature] = useState(true);
-  const [includeStamp, setIncludeStamp] = useState(true);
+  const [includeSignature, setIncludeSignature] = useState(false);
+  const [includeStamp, setIncludeStamp] = useState(false);
   const [receiveChannel, setReceiveChannel] = useState<"CASH" | "BANK" | "CHEQUE">("BANK");
 
   const receiptTotal = useMemo(
@@ -346,7 +346,7 @@ export function ReceiptForm({
           includeStamp,
         });
       }
-      router.push(`/documents/receipt/${docId}`);
+      router.push(`/documents/receipt`);
       router.refresh();
     });
   }

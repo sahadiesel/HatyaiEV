@@ -25,8 +25,8 @@ export async function GET(
   const { id } = await params;
   const url = new URL(req.url);
   const issuedByFromQuery = url.searchParams.get("issuedBy")?.trim() ?? "";
-  const includeSignature = url.searchParams.get("sig") !== "0";
-  const includeStamp = url.searchParams.get("stamp") !== "0";
+  const includeSignature = url.searchParams.get("sig") === "1";
+  const includeStamp = url.searchParams.get("stamp") === "1";
   const previewOnly = url.searchParams.get("preview") === "1";
   const doc = await getDocument(id);
   if (!doc) {

@@ -10,8 +10,8 @@ export function DocumentPrintLink({
   label = "พิมพ์",
   compact = false,
   showOptions = true,
-  includeSignature: initialSig = true,
-  includeStamp: initialStamp = true,
+  includeSignature: initialSig = false,
+  includeStamp: initialStamp = false,
   onOptionsChange,
 }: {
   documentId: string;

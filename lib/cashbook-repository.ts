@@ -17,8 +17,9 @@ function db() {
 }
 
 function parseEntry(id: string, d: Record<string, unknown>): CashbookEntry {
+  const channelRaw = String(d.channel ?? "").toUpperCase();
   const channel: CashChannel =
-    d.channel === "BANK" || d.bankAccountId ? "BANK" : d.channel === "CASH" ? "CASH" : "CASH";
+    channelRaw === "BANK" ? "BANK" : channelRaw === "CASH" ? "CASH" : d.bankAccountId ? "BANK" : "CASH";
   return {
     id,
     entryNo: String(d.entryNo ?? ""),
@@ -157,6 +158,10 @@ export async function postCashbookEntry(input: PostCashbookInput) {
 
   const channel: CashChannel =
     input.channel ?? (input.bankAccountId ? "BANK" : "CASH");
+  const bankAccountId =
+    input.bankAccountId && String(input.bankAccountId).trim()
+      ? String(input.bankAccountId).trim()
+      : null;
   const entryDate = input.entryDate || new Date().toISOString().slice(0, 10);
   const entryNo = await nextCashbookNo(entryDate);
   const id = newEntityId();
@@ -174,7 +179,7 @@ export async function postCashbookEntry(input: PostCashbookInput) {
     vehicleId: input.vehicleId ?? null,
     entityId: input.entityId ?? null,
     channel,
-    bankAccountId: channel === "BANK" ? (input.bankAccountId ?? null) : null,
+    bankAccountId,
     taxBasisAmount:
       input.taxBasisAmount != null && input.taxBasisAmount !== ""
         ? roundMoney2(parseAmount(input.taxBasisAmount)).toFixed(2)
