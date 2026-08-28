@@ -13,12 +13,13 @@ import {
   calcSaleDepositTaxInvoice,
   effectivePurchaseContractAmount,
 } from "@/lib/finance/vat-margin";
-import { saveLegalDocClient } from "@/lib/legal-documents-client";
+import { saveLegalDocClient, listLegalDocsClient } from "@/lib/legal-documents-client";
 import { ensurePrimaryBankAccount } from "@/lib/bank-accounts-client";
 import { postCashbookEntryClient } from "@/lib/cashbook-client";
-import { listVehiclesClient, updateVehicleFieldsClient } from "@/lib/vehicles-client";
+import { listVehiclesClient, updateVehicleFieldsClient, getVehicleClient } from "@/lib/vehicles-client";
 import { formatBaht } from "@/lib/vehicles/calc";
 import type { ContractPartySnapshot, EntityRecord, VehicleRecord } from "@/lib/domain-types";
+import { reconcileVehiclePurchaseFromContractClient } from "@/lib/vehicles/purchase-amount-sync";
 
 const inp =
   "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
@@ -88,11 +89,23 @@ export function VehicleSaleContractForm({
 
   useEffect(() => {
     void (async () => {
-      const [ents, vehs, brandCo] = await Promise.all([
+      const [ents, vehs0, brandCo, purchaseContracts] = await Promise.all([
         listEntitiesClient(),
         listVehiclesClient(),
         loadCompanyBrandClient(),
+        listLegalDocsClient("PURCHASE_CONTRACT"),
       ]);
+      const byVehicle = new Map(
+        purchaseContracts.filter((c) => c.vehicleId).map((c) => [c.vehicleId as string, c]),
+      );
+      const vehs: VehicleRecord[] = [];
+      for (const v of vehs0) {
+        const { vehicle } = await reconcileVehiclePurchaseFromContractClient(
+          v,
+          byVehicle.get(v.id) || null,
+        );
+        vehs.push(vehicle);
+      }
       setEntities(ents);
       setVehicles(vehs);
       setIssuePlace(brandCo.companyName || "บริษัท หาดใหญ่ อี วี จำกัด");
@@ -138,21 +151,25 @@ export function VehicleSaleContractForm({
 
   function onPickVehicle(id: string) {
     setVehicleId(id);
-    const v = vehicles.find((x) => x.id === id);
-    if (!v) return;
-    setBrand(v.brand);
-    setModel(v.model);
-    setLicensePlate(v.licensePlate);
-    setVin(v.vin);
-    const sale =
-      parseAmount(v.saleContractAmount) > 0
-        ? v.saleContractAmount
-        : parseAmount(v.expectedSalePrice) > 0
-          ? v.expectedSalePrice
-          : parseAmount(v.soldPrice) > 0
-            ? v.soldPrice
-            : "";
-    if (sale) setAmount(sale);
+    void (async () => {
+      const fresh = (await getVehicleClient(id)) || vehicles.find((x) => x.id === id);
+      if (!fresh) return;
+      const { vehicle: v } = await reconcileVehiclePurchaseFromContractClient(fresh);
+      setVehicles((prev) => prev.map((row) => (row.id === v.id ? v : row)));
+      setBrand(v.brand);
+      setModel(v.model);
+      setLicensePlate(v.licensePlate);
+      setVin(v.vin);
+      const sale =
+        parseAmount(v.saleContractAmount) > 0
+          ? v.saleContractAmount
+          : parseAmount(v.expectedSalePrice) > 0
+            ? v.expectedSalePrice
+            : parseAmount(v.soldPrice) > 0
+              ? v.soldPrice
+              : "";
+      if (sale) setAmount(sale);
+    })();
   }
 
   const selectedVehicle = vehicles.find((v) => v.id === vehicleId) ?? null;
@@ -460,16 +477,16 @@ export function VehicleSaleContractForm({
 
       {saleAmt > 0 && (
         <div className="rounded-md border border-blue-200 bg-blue-50/60 p-4 text-sm text-slate-800">
-          <p className="font-semibold text-slate-900">ใบกำกับภาษีมัดจำ (แสดงลูกค้า) + VAT ป.111 (หลังบ้าน)</p>
+          <p className="font-semibold text-slate-900">ใบกำกับภาษีมัดจำ (บริษัทจด VAT)</p>
           <p className="mt-2">
             มัดจำ {depositPercent}% = <strong>฿{formatBaht(depositAmt)}</strong>
             {" → "}
             ฐาน ฿{formatBaht(customerBreakdown.base)} + VAT 7% ฿{formatBaht(customerBreakdown.vatAmount)}
           </p>
-          {marginTax && selectedVehicle?.purchaseType === "INDIVIDUAL_NO_VAT" && (
+          {marginTax && (
             <p className="mt-1 text-xs text-slate-600">
-              นำส่งสรรพากรตาม Margin: กำไรส่วนมัดจำ ฿{formatBaht(marginTax.marginPortion)} · VAT นำส่ง ฿
-              {formatBaht(marginTax.remittanceVat)} (ไม่ใช้ VAT จากยอดเต็มของลูกค้า)
+              VAT นำส่งจากยอดมัดจำ × 7/107 = ฿{formatBaht(marginTax.remittanceVat)} · ฐานภาษี ฿
+              {formatBaht(marginTax.taxBasisAmount)}
             </p>
           )}
           {selectedVehicle && (
@@ -479,7 +496,7 @@ export function VehicleSaleContractForm({
             </p>
           )}
           <p className="mt-2 text-xs">
-            หลังบันทึก: ล็อก sale_contract_amount บนรถ + ลงสมุดเงินสดเข้าบัญชีกสิกรไทยอัตโนมัติ
+            หลังบันทึก: ล็อก sale_contract_amount บนรถ + ลงสมุดเงินสดเข้าบัญชีหลักอัตโนมัติ
           </p>
         </div>
       )}

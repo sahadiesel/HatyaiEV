@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { PrintDocIconButton } from "@/components/PrintDocIconButton";
 import { CASH_ACCOUNT_ID, channelForAccountId, listBankAccountsClient } from "@/lib/bank-accounts-client";
-import { parseAmount } from "@/lib/documents/calc";
+import { calcWithholdingTotals, parseAmount } from "@/lib/documents/calc";
 import { printDocumentClient } from "@/lib/documents-client";
 import type {
   BankAccountRecord,
@@ -37,6 +38,7 @@ import {
   loadVehicleDocumentPack,
   type VehicleDocumentPack,
 } from "@/lib/vehicles/document-pack";
+import { reconcileVehiclePurchaseFromContractClient } from "@/lib/vehicles/purchase-amount-sync";
 
 const inp =
   "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
@@ -48,21 +50,50 @@ export function VehicleDetailClient({
   vehicle: VehicleRecord;
   entities: EntityRecord[];
 }) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [vehicle, setVehicle] = useState(initial);
   const [msg, setMsg] = useState<string | null>(null);
   const [msgOk, setMsgOk] = useState(true);
+  const [payMsg, setPayMsg] = useState<string | null>(null);
+  const [payMsgOk, setPayMsgOk] = useState(true);
   const [expectedSalePrice, setExpectedSalePrice] = useState(initial.expectedSalePrice);
   const [commissionAmount, setCommissionAmount] = useState(initial.commissionAmount);
   const [costCategory, setCostCategory] = useState<VehicleCostCategory>("PARTS");
   const [createPvNoBill, setCreatePvNoBill] = useState(false);
+  const [costPostCash, setCostPostCash] = useState(true);
+  const [costAccountId, setCostAccountId] = useState("");
+  const [costHasVat, setCostHasVat] = useState(false);
+  const [costHasWht, setCostHasWht] = useState(false);
+  const [costAmount, setCostAmount] = useState("");
+  const [costBillNo, setCostBillNo] = useState("");
+  const [costReceiptNo, setCostReceiptNo] = useState("");
+  const [costEntityId, setCostEntityId] = useState("");
   const [payCreatePv, setPayCreatePv] = useState(false);
   const [payAccountId, setPayAccountId] = useState("");
+  const [payHasVat, setPayHasVat] = useState(false);
+  const [payBillNo, setPayBillNo] = useState("");
+  const [payReceiptNo, setPayReceiptNo] = useState("");
+  const [payAmount, setPayAmount] = useState("");
+  const [paySaving, setPaySaving] = useState(false);
   const [banks, setBanks] = useState<BankAccountRecord[]>([]);
   const [docPack, setDocPack] = useState<VehicleDocumentPack | null>(null);
 
   function reloadDocPack() {
-    void loadVehicleDocumentPack(vehicle.id).then(setDocPack);
+    void loadVehicleDocumentPack(vehicle.id).then(async (pack) => {
+      setDocPack(pack);
+      const rec = await reconcileVehiclePurchaseFromContractClient(
+        vehicle,
+        pack.purchaseContract,
+      );
+      if (rec.synced) {
+        setVehicle(rec.vehicle);
+        flash(
+          true,
+          `ซิงก์ราคาซื้อจากสัญญาซื้อเป็น ฿${formatBaht(rec.contractAmount || 0)} แล้ว`,
+        );
+      }
+    });
   }
 
   useEffect(() => {
@@ -74,9 +105,20 @@ export function VehicleDetailClient({
     void listBankAccountsClient().then((rows) => {
       setBanks(rows);
       const primary = rows.find((b) => b.isPrimary && b.kind !== "CASH") || rows.find((b) => b.kind !== "CASH");
-      setPayAccountId((prev) => prev || primary?.id || CASH_ACCOUNT_ID);
+      const fallback = primary?.id || CASH_ACCOUNT_ID;
+      setPayAccountId((prev) => prev || fallback);
+      setCostAccountId((prev) => prev || fallback);
     });
   }, []);
+
+  useEffect(() => {
+    setPayHasVat(vehicle.purchaseType === "COMPANY_VAT_7");
+  }, [vehicle.purchaseType]);
+
+  useEffect(() => {
+    setCostHasWht(costCategory === "LABOR");
+    setCreatePvNoBill(false);
+  }, [costCategory]);
 
   const payAccountOptions = useMemo(() => {
     const opts: { id: string; label: string }[] = [
@@ -95,6 +137,25 @@ export function VehicleDetailClient({
     return opts;
   }, [banks]);
 
+  const costPartner = useMemo(
+    () => entities.find((e) => e.id === costEntityId) || null,
+    [entities, costEntityId],
+  );
+
+  const costWhtPreview = useMemo(() => {
+    const gross = Number(String(costAmount).replace(/,/g, "")) || 0;
+    if (!costHasWht || !costPartner || gross <= 0) {
+      return { gross, wht: 0, net: gross };
+    }
+    const rate = Number(String(costPartner.defaultWhtPercent || "3").replace(/,/g, "")) || 0;
+    const wht = calcWithholdingTotals({
+      base: gross,
+      vatRatePercent: 0,
+      whtRatePercent: rate,
+    }).withholdingAmount;
+    return { gross, wht, net: Math.max(0, gross - wht) };
+  }, [costAmount, costHasWht, costPartner]);
+
   const eco = useMemo(
     () =>
       summarizeVehicleEconomics({
@@ -108,6 +169,102 @@ export function VehicleDetailClient({
   const seller = entities.find((e) => e.id === vehicle.sellerEntityId);
   const buyer = entities.find((e) => e.id === vehicle.buyerEntityId);
   const paySummary = useMemo(() => calcPurchasePaymentSummary(vehicle), [vehicle]);
+
+  useEffect(() => {
+    if (paySummary.remaining > 0) {
+      setPayAmount((prev) => {
+        if (prev.trim()) return prev;
+        return String(paySummary.remaining);
+      });
+    }
+  }, [paySummary.remaining]);
+
+  async function onSavePurchasePayment() {
+    const amountNum = Number(String(payAmount).replace(/,/g, "")) || 0;
+    const billNo = payBillNo.trim();
+    const receiptNo = payReceiptNo.trim();
+    setPayMsg(null);
+
+    if (amountNum <= 0) {
+      setPayMsgOk(false);
+      setPayMsg("กรอกจำนวนที่จ่าย");
+      return;
+    }
+    if (amountNum > paySummary.remaining + 0.001) {
+      setPayMsgOk(false);
+      setPayMsg(`จ่ายเกินยอดคงค้าง (คงเหลือ ฿${formatBaht(paySummary.remaining)})`);
+      return;
+    }
+    if (payHasVat) {
+      if (!billNo) {
+        setPayMsgOk(false);
+        setPayMsg("มี VAT — กรอกเลขที่บิล / ใบกำกับภาษี");
+        return;
+      }
+      if (!receiptNo) {
+        setPayMsgOk(false);
+        setPayMsg("มี VAT — กรอกเลขที่ใบเสร็จ");
+        return;
+      }
+    }
+    if (payCreatePv && !payHasVat && !billNo && !vehicle.sellerEntityId) {
+      setPayMsgOk(false);
+      setPayMsg("สร้างใบสำคัญจ่ายต้องมีผู้ขาย");
+      return;
+    }
+    if (!payAccountId) {
+      setPayMsgOk(false);
+      setPayMsg("เลือกบัญชีที่ตัดเงิน");
+      return;
+    }
+
+    setPaySaving(true);
+    try {
+      const channel = channelForAccountId(payAccountId, banks);
+      const bankAccountId = payAccountId === CASH_ACCOUNT_ID ? null : payAccountId;
+      const entryDate =
+        (document.getElementById("pay-entry-date") as HTMLInputElement | null)?.value ||
+        new Date().toISOString().slice(0, 10);
+
+      const res = await addVehiclePurchasePaymentClient(vehicle.id, {
+        date: entryDate,
+        amount: amountNum,
+        billNo: billNo || null,
+        receiptNo: receiptNo || null,
+        createPaymentVoucher: payCreatePv && !payHasVat,
+        hasVat: payHasVat,
+        channel,
+        bankAccountId,
+      });
+      if (!res.ok) {
+        setPayMsgOk(false);
+        setPayMsg(res.message || "บันทึกไม่สำเร็จ");
+        return;
+      }
+
+      setVehicle(res.vehicle);
+      setPayCreatePv(false);
+      setPayBillNo("");
+      setPayReceiptNo("");
+      setPayAmount("");
+      const okText =
+        res.remaining > 0
+          ? `บันทึกจ่ายแล้ว · คงค้าง ฿${formatBaht(res.remaining)}`
+          : "จ่ายครบมูลค่าสัญญาแล้ว";
+      setPayMsgOk(true);
+      setPayMsg(okText);
+      flash(true, `${okText} — กำลังกลับหน้ารถยนต์และต้นทุน…`);
+      router.push("/vehicles");
+      router.refresh();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setPayMsgOk(false);
+      setPayMsg(`เกิดข้อผิดพลาด: ${message}`);
+      console.error("[onSavePurchasePayment]", e);
+    } finally {
+      setPaySaving(false);
+    }
+  }
 
   const partnerOptions = useMemo(() => {
     if (costCategory === "LABOR") {
@@ -158,22 +315,52 @@ export function VehicleDetailClient({
       (String(fd.get("category") ?? costCategory) as VehicleCostCategory) || "PARTS";
     const date = String(fd.get("date") ?? new Date().toISOString().slice(0, 10));
     const description = String(fd.get("description") ?? "");
-    const amount = String(fd.get("amount") ?? "0");
-    const entityId = String(fd.get("entityId") ?? "").trim() || null;
-    const billNo = String(fd.get("billNo") ?? "").trim();
+    const amount = String(fd.get("amount") ?? costAmount ?? "0");
+    const entityId = costEntityId.trim() || null;
+    const billNo = costBillNo.trim();
+    const receiptNo = costReceiptNo.trim();
     const entity = entityId ? entities.find((x) => x.id === entityId) || null : null;
     const vehicleLabel =
       `${vehicle.code || ""} ${vehicle.brand} ${vehicle.model} ${vehicle.licensePlate || ""}`.trim();
+    const postCash = costPostCash;
 
     startTransition(async () => {
       if (category === "LABOR" && !entity) {
         flash(false, "ค่าแรงต้องเลือกคู่ค้า");
         return;
       }
-      if ((category === "PARTS" || category === "REPAIR") && !billNo && createPvNoBill && !entity) {
+      if (costHasWht && !entity) {
+        flash(false, "หัก ณ ที่จ่ายต้องเลือกคู่ค้า");
+        return;
+      }
+      if (
+        (category === "PARTS" || category === "REPAIR") &&
+        !billNo &&
+        !receiptNo &&
+        createPvNoBill &&
+        !entity
+      ) {
         flash(false, "ไม่มีเลขบิล — เลือกคู่ค้าเพื่อสร้างใบสำคัญจ่าย");
         return;
       }
+      if (postCash && !costAccountId) {
+        flash(false, "เลือกบัญชีที่ตัดเงิน");
+        return;
+      }
+      if (costHasVat) {
+        if (!billNo) {
+          flash(false, "มี VAT — กรอกเลขที่บิล / ใบกำกับภาษี");
+          return;
+        }
+        if (!receiptNo) {
+          flash(false, "มี VAT — กรอกเลขที่ใบเสร็จ");
+          return;
+        }
+      }
+
+      const channel = channelForAccountId(costAccountId || CASH_ACCOUNT_ID, banks);
+      const bankAccountId =
+        !costAccountId || costAccountId === CASH_ACCOUNT_ID ? null : costAccountId;
 
       const docs = await createDocsForVehicleCostExpense({
         category,
@@ -182,14 +369,21 @@ export function VehicleDetailClient({
         description,
         entity,
         billNo,
-        createPaymentVoucher: createPvNoBill,
+        receiptNo,
+        createPaymentVoucher: createPvNoBill && !costHasVat,
+        withholdingEnabled: costHasWht,
         vehicleId: vehicle.id,
         vehicleLabel,
+        channel,
       });
       if (!docs.ok) {
         flash(false, docs.message);
         return;
       }
+
+      const docRef = [billNo && `บิล ${billNo}`, receiptNo && `ใบเสร็จ ${receiptNo}`]
+        .filter(Boolean)
+        .join(" · ");
 
       const res = await addVehicleCostLineClient(
         vehicle.id,
@@ -199,17 +393,20 @@ export function VehicleDetailClient({
           description,
           amount,
           entityId,
-          billNo: billNo || null,
+          billNo: docRef || billNo || null,
           documentId: docs.paymentVoucherDocumentId,
           withholdingDocumentId: docs.withholdingDocumentId,
           paymentVoucherDocumentId: docs.paymentVoucherDocumentId,
         },
         {
-          postCashbook: fd.get("postCash") === "1",
+          postCashbook: postCash,
           cashOutAmount: docs.cashOutAmount,
           withholdingAmount: docs.withholdingAmount,
           withholdingDocumentNumber: docs.withholdingDocumentNumber,
           paymentVoucherDocumentNumber: docs.paymentVoucherDocumentNumber,
+          channel,
+          bankAccountId,
+          vatType: costHasVat ? "FULL_VAT" : "NO_VAT",
         },
       );
       if (!res.ok) {
@@ -220,11 +417,15 @@ export function VehicleDetailClient({
       const parts: string[] = ["เพิ่มต้นทุนสะสมแล้ว"];
       if (docs.withholdingDocumentNumber) {
         parts.push(`หัก ณ ที่จ่าย ${docs.withholdingDocumentNumber}`);
-        if (docs.withholdingAmount > 0) {
-          parts.push(
-            `ตัดบัญชี ฿${docs.cashOutAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })}`,
-          );
-        }
+      }
+      if (docs.withholdingAmount > 0 && postCash) {
+        parts.push(
+          `ตัดบัญชี ฿${docs.cashOutAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })}`,
+        );
+      } else if (postCash) {
+        parts.push(
+          `ตัดบัญชี ฿${docs.cashOutAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })}`,
+        );
       }
       if (docs.paymentVoucherDocumentNumber) {
         parts.push(`ใบสำคัญจ่าย ${docs.paymentVoucherDocumentNumber}`);
@@ -233,6 +434,13 @@ export function VehicleDetailClient({
       form.reset();
       setCostCategory("PARTS");
       setCreatePvNoBill(false);
+      setCostHasVat(false);
+      setCostHasWht(false);
+      setCostAmount("");
+      setCostBillNo("");
+      setCostReceiptNo("");
+      setCostEntityId("");
+      setCostPostCash(true);
     });
   }
 
@@ -308,13 +516,22 @@ export function VehicleDetailClient({
               >
                 ฿{formatBaht(eco.grossProfit)}
               </p>
+              <p className="mt-0.5 text-[11px] text-slate-500">หลังแยก VAT จากราคาตั้งขาย − ต้นทุน</p>
             </div>
           </div>
           {eco.saleVat && (
-            <p className="mt-3 text-xs text-slate-500">
-              VAT เมื่อขาย ({eco.saleVat.scheme === "MARGIN" ? "Margin Scheme ป.111" : "ยอดขายเต็ม"}): ฿
-              {formatBaht(eco.saleVat.vatAmount)} · ฐานภาษี ฿{formatBaht(eco.saleVat.taxableBase)}
-            </p>
+            <div className="mt-3 space-y-1 rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              <p>
+                ราคาตั้งขายรวม VAT ฿{formatBaht(eco.saleVat.salePriceInclusive)} = ก่อน VAT ฿
+                {formatBaht(eco.saleVat.priceBeforeVat)} + VAT 7% ฿{formatBaht(eco.saleVat.vatAmount)}
+              </p>
+              <p>
+                VAT นำส่ง (ภ.พ.30) ฿{formatBaht(eco.saleVat.vatAmount)}
+                {vehicle.purchaseType === "INDIVIDUAL_NO_VAT"
+                  ? " · ภาษีซื้อ ≈ 0 (ซื้อจากบุคคลไม่มีใบกำกับ)"
+                  : ""}
+              </p>
+            </div>
           )}
           <button
             type="button"
@@ -331,7 +548,7 @@ export function VehicleDetailClient({
         <form onSubmit={addCost} className="space-y-3 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="font-semibold text-slate-900">เพิ่มต้นทุนสะสม</h2>
           <p className="text-xs text-slate-500">
-            ค่าแรง → สร้างใบสำคัญจ่าย (+ ใบหัก ณ ที่จ่ายอัตโนมัติ) · อะไหล่ → บันทึกเลขบิล หรือสร้างใบสำคัญจ่ายเมื่อไม่มีบิล
+            ต้นทุนรถเก็บยอดเต็ม — ถ้าหัก ณ ที่จ่าย ยอดตัดสมุดเงินสดจะเป็นยอดสุทธิหลังหัก
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-sm">
@@ -349,10 +566,7 @@ export function VehicleDetailClient({
                 name="category"
                 className={inp}
                 value={costCategory}
-                onChange={(e) => {
-                  setCostCategory(e.target.value as VehicleCostCategory);
-                  setCreatePvNoBill(false);
-                }}
+                onChange={(e) => setCostCategory(e.target.value as VehicleCostCategory)}
               >
                 {(Object.keys(COST_CATEGORY_LABELS) as VehicleCostCategory[]).map((k) => (
                   <option key={k} value={k}>
@@ -363,19 +577,20 @@ export function VehicleDetailClient({
             </label>
             <label className="text-sm sm:col-span-2">
               <span className="mb-1 block text-slate-600">
-                คู่ค้า {costCategory === "LABOR" ? "*" : ""}
+                คู่ค้า {costCategory === "LABOR" || costHasWht ? "*" : ""}
               </span>
               <select
-                key={`${costCategory}-${createPvNoBill}`}
                 name="entityId"
                 className={inp}
-                required={costCategory === "LABOR" || createPvNoBill}
-                defaultValue=""
+                value={costEntityId}
+                onChange={(e) => setCostEntityId(e.target.value)}
+                required={costCategory === "LABOR" || costHasWht || createPvNoBill}
               >
                 <option value="">— เลือกคู่ค้า —</option>
                 {partnerOptions.map((e) => (
                   <option key={e.id} value={e.id}>
                     {e.name}
+                    {e.defaultWhtPercent ? ` (หัก ${e.defaultWhtPercent}%)` : ""}
                   </option>
                 ))}
               </select>
@@ -390,39 +605,154 @@ export function VehicleDetailClient({
               <input name="description" className={inp} placeholder="เช่น แบตเตอรี่, ค่าแรงเปลี่ยนยาง" required />
             </label>
             <label className="text-sm">
-              <span className="mb-1 block text-slate-600">จำนวนเงิน</span>
-              <input name="amount" className={inp} required defaultValue="0" />
+              <span className="mb-1 block text-slate-600">จำนวนเงิน (ต้นทุน) *</span>
+              <input
+                name="amount"
+                className={inp}
+                required
+                value={costAmount}
+                onChange={(e) => setCostAmount(e.target.value)}
+                placeholder="0.00"
+              />
             </label>
-            {(costCategory === "PARTS" || costCategory === "REPAIR") && (
-              <label className="text-sm">
-                <span className="mb-1 block text-slate-600">เลขที่บิล</span>
-                <input
-                  name="billNo"
-                  className={inp}
-                  placeholder="เช่น INV-001"
-                  disabled={createPvNoBill}
-                />
-              </label>
-            )}
-            {costCategory === "LABOR" && (
-              <p className="text-xs text-slate-600 sm:col-span-2">
-                จะสร้างใบสำคัญจ่าย (+ ใบหัก ณ ที่จ่ายอัตโนมัติ ตามอัตราเริ่มต้นของคู่ค้า)
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              <p>
+                ตัดบัญชี:{" "}
+                <span className="font-semibold tabular-nums text-slate-900">
+                  ฿{formatBaht(costWhtPreview.net)}
+                </span>
               </p>
-            )}
-            {(costCategory === "PARTS" || costCategory === "REPAIR") && (
-              <label className="flex items-end gap-2 pb-2 text-sm text-slate-700 sm:col-span-2">
-                <input
-                  type="checkbox"
-                  checked={createPvNoBill}
-                  onChange={(e) => setCreatePvNoBill(e.target.checked)}
-                />
-                ไม่มีบิล — สร้างใบสำคัญจ่าย
-              </label>
-            )}
-            <label className="flex items-end gap-2 pb-2 text-sm text-slate-700 sm:col-span-2">
-              <input type="checkbox" name="postCash" value="1" defaultChecked />
+              {costHasWht && costWhtPreview.wht > 0 ? (
+                <p className="mt-0.5">
+                  ยอดเต็ม ฿{formatBaht(costWhtPreview.gross)} − หัก{" "}
+                  {costPartner?.defaultWhtPercent || "3"}% = ฿{formatBaht(costWhtPreview.wht)}
+                </p>
+              ) : (
+                <p className="mt-0.5">ยังไม่หัก ณ ที่จ่าย — ตัดตามยอดเต็ม</p>
+              )}
+            </div>
+
+            <fieldset className="sm:col-span-2 space-y-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
+              <legend className="px-1 text-sm font-medium text-slate-800">ภาษีมูลค่าเพิ่ม</legend>
+              <div className="flex flex-wrap gap-4 text-sm">
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="radio"
+                    checked={!costHasVat}
+                    onChange={() => setCostHasVat(false)}
+                  />
+                  ไม่มี VAT
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="radio"
+                    checked={costHasVat}
+                    onChange={() => {
+                      setCostHasVat(true);
+                      setCreatePvNoBill(false);
+                    }}
+                  />
+                  มี VAT
+                </label>
+              </div>
+              {costHasVat ? (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-sm">
+                    <span className="mb-1 block text-slate-600">เลขที่บิล / ใบกำกับ *</span>
+                    <input
+                      className={inp}
+                      value={costBillNo}
+                      onChange={(e) => setCostBillNo(e.target.value)}
+                      required
+                    />
+                  </label>
+                  <label className="text-sm">
+                    <span className="mb-1 block text-slate-600">เลขที่ใบเสร็จ *</span>
+                    <input
+                      className={inp}
+                      value={costReceiptNo}
+                      onChange={(e) => setCostReceiptNo(e.target.value)}
+                      required
+                    />
+                  </label>
+                </div>
+              ) : (costCategory === "PARTS" || costCategory === "REPAIR") ? (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-sm">
+                    <span className="mb-1 block text-slate-600">เลขที่เอกสาร (ถ้ามี)</span>
+                    <input
+                      className={inp}
+                      value={costBillNo}
+                      onChange={(e) => setCostBillNo(e.target.value)}
+                      placeholder="เช่น INV-001"
+                      disabled={createPvNoBill}
+                    />
+                  </label>
+                  <label className="flex items-end gap-2 pb-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={createPvNoBill}
+                      onChange={(e) => setCreatePvNoBill(e.target.checked)}
+                    />
+                    ไม่มีบิล — สร้างใบสำคัญจ่าย
+                  </label>
+                </div>
+              ) : null}
+            </fieldset>
+
+            <fieldset className="sm:col-span-2 space-y-2 rounded-md border border-amber-200 bg-amber-50/50 px-3 py-3">
+              <legend className="px-1 text-sm font-medium text-slate-800">หักภาษี ณ ที่จ่าย</legend>
+              <div className="flex flex-wrap gap-4 text-sm">
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="radio"
+                    checked={!costHasWht}
+                    onChange={() => setCostHasWht(false)}
+                  />
+                  ไม่มีหัก ณ ที่จ่าย
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="radio"
+                    checked={costHasWht}
+                    onChange={() => setCostHasWht(true)}
+                  />
+                  มีหัก ณ ที่จ่าย
+                </label>
+              </div>
+              {costHasWht && (
+                <p className="text-xs text-amber-900">
+                  จะสร้างใบสำคัญจ่าย + ใบหัก ณ ที่จ่าย ตามอัตราของคู่ค้า (
+                  {costPartner?.defaultWhtPercent || "3"}%) — ยอดตัดบัญชี = ยอดต้นทุน − ยอดหัก
+                </p>
+              )}
+            </fieldset>
+
+            <label className="flex items-center gap-2 text-sm text-slate-700 sm:col-span-2">
+              <input
+                type="checkbox"
+                checked={costPostCash}
+                onChange={(e) => setCostPostCash(e.target.checked)}
+              />
               ลงสมุดเงินสดด้วย (จ่ายออก)
             </label>
+            {costPostCash && (
+              <label className="text-sm sm:col-span-2">
+                <span className="mb-1 block text-slate-600">ตัดเงินจากบัญชี *</span>
+                <select
+                  className={inp}
+                  value={costAccountId}
+                  onChange={(e) => setCostAccountId(e.target.value)}
+                  required
+                >
+                  {payAccountOptions.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
           <button
             type="submit"
@@ -617,8 +947,10 @@ export function VehicleDetailClient({
                     <td className="px-3 py-2">{formatDateThBE(p.date)}</td>
                     <td className="px-3 py-2 tabular-nums">฿{formatBaht(Number(p.amount) || 0)}</td>
                     <td className="px-3 py-2 text-xs text-slate-600">
-                      {p.billNo
-                        ? `บิล ${p.billNo}`
+                      {p.billNo || p.receiptNo
+                        ? [p.billNo && `บิล ${p.billNo}`, p.receiptNo && `ใบเสร็จ ${p.receiptNo}`]
+                            .filter(Boolean)
+                            .join(" · ")
                         : p.paymentVoucherDocumentNumber
                           ? `ใบสำคัญจ่าย ${p.paymentVoucherDocumentNumber}`
                           : "—"}
@@ -640,58 +972,22 @@ export function VehicleDetailClient({
         )}
 
         {paySummary.remaining > 0 ? (
-          <form
-            className="grid gap-3 sm:grid-cols-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const form = e.currentTarget;
-              const fd = new FormData(form);
-              const amount = String(fd.get("amount") ?? "0");
-              const billNo = String(fd.get("billNo") ?? "").trim();
-              startTransition(async () => {
-                if (!docPack?.purchaseContract) {
-                  flash(false, "ต้องสร้างสัญญาซื้อก่อนบันทึกการจ่ายค่าซื้อรถ");
-                  return;
+          <div className="grid gap-3 sm:grid-cols-2">
+            {payMsg && (
+              <p
+                className={
+                  payMsgOk
+                    ? "sm:col-span-2 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
+                    : "sm:col-span-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700"
                 }
-                if (payCreatePv && !billNo && !vehicle.sellerEntityId) {
-                  flash(false, "สร้างใบสำคัญจ่ายต้องมีผู้ขาย");
-                  return;
-                }
-                if (!payAccountId) {
-                  flash(false, "เลือกบัญชีที่ตัดเงิน");
-                  return;
-                }
-                const channel = channelForAccountId(payAccountId, banks);
-                const bankAccountId =
-                  payAccountId === CASH_ACCOUNT_ID ? null : payAccountId;
-                const res = await addVehiclePurchasePaymentClient(vehicle.id, {
-                  date: String(fd.get("date") ?? "") || undefined,
-                  amount,
-                  billNo,
-                  createPaymentVoucher: payCreatePv && !billNo,
-                  channel,
-                  bankAccountId,
-                });
-                if (!res.ok) {
-                  flash(false, res.message);
-                  return;
-                }
-                setVehicle(res.vehicle);
-                setPayCreatePv(false);
-                form.reset();
-                flash(
-                  true,
-                  res.remaining > 0
-                    ? `บันทึกจ่ายแล้ว · คงค้าง ฿${formatBaht(res.remaining)}`
-                    : "จ่ายครบมูลค่าสัญญาแล้ว",
-                );
-              });
-            }}
-          >
+              >
+                {payMsg}
+              </p>
+            )}
             <label className="text-sm">
               <span className="mb-1 block text-slate-600">วันที่จ่าย</span>
               <input
-                name="date"
+                id="pay-entry-date"
                 type="date"
                 className={inp}
                 defaultValue={new Date().toISOString().slice(0, 10)}
@@ -700,54 +996,105 @@ export function VehicleDetailClient({
             <label className="text-sm">
               <span className="mb-1 block text-slate-600">จำนวนที่จ่าย (บาท)</span>
               <input
-                name="amount"
                 className={inp}
-                required
+                value={payAmount}
+                onChange={(e) => setPayAmount(e.target.value)}
                 placeholder={`สูงสุด ${formatBaht(paySummary.remaining)}`}
               />
             </label>
-            <label className="text-sm">
-              <span className="mb-1 block text-slate-600">ตัดจากบัญชี</span>
+            <label className="text-sm sm:col-span-2">
+              <span className="mb-1 block text-slate-600">ตัดจากบัญชี *</span>
               <select
                 className={inp}
                 value={payAccountId}
                 onChange={(e) => setPayAccountId(e.target.value)}
-                required
               >
-                {payAccountOptions.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.label}
-                  </option>
-                ))}
+                {payAccountOptions.length === 0 ? (
+                  <option value="">กำลังโหลดบัญชี…</option>
+                ) : (
+                  payAccountOptions.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.label}
+                    </option>
+                  ))
+                )}
               </select>
             </label>
-            <label className="text-sm">
-              <span className="mb-1 block text-slate-600">เลขที่ใบเสร็จ / ใบกำกับ</span>
-              <input
-                name="billNo"
-                className={inp}
-                placeholder="ถ้ามีจากผู้ขาย"
-                disabled={payCreatePv}
-              />
-            </label>
-            <label className="flex items-end gap-2 pb-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={payCreatePv}
-                onChange={(e) => setPayCreatePv(e.target.checked)}
-              />
-              ไม่มีใบเสร็จ/ใบกำกับ — สร้างใบสำคัญจ่าย
-            </label>
+            <fieldset className="sm:col-span-2 space-y-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
+              <legend className="px-1 text-sm font-medium text-slate-800">ภาษีมูลค่าเพิ่ม</legend>
+              <div className="flex flex-wrap gap-4 text-sm">
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="radio"
+                    checked={!payHasVat}
+                    onChange={() => setPayHasVat(false)}
+                  />
+                  ไม่มี VAT
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="radio"
+                    checked={payHasVat}
+                    onChange={() => {
+                      setPayHasVat(true);
+                      setPayCreatePv(false);
+                    }}
+                  />
+                  มี VAT
+                </label>
+              </div>
+              {payHasVat ? (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-sm">
+                    <span className="mb-1 block text-slate-600">เลขที่บิล / ใบกำกับ *</span>
+                    <input
+                      className={inp}
+                      value={payBillNo}
+                      onChange={(e) => setPayBillNo(e.target.value)}
+                    />
+                  </label>
+                  <label className="text-sm">
+                    <span className="mb-1 block text-slate-600">เลขที่ใบเสร็จ *</span>
+                    <input
+                      className={inp}
+                      value={payReceiptNo}
+                      onChange={(e) => setPayReceiptNo(e.target.value)}
+                    />
+                  </label>
+                </div>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-sm">
+                    <span className="mb-1 block text-slate-600">เลขที่เอกสาร (ถ้ามี)</span>
+                    <input
+                      className={inp}
+                      value={payBillNo}
+                      onChange={(e) => setPayBillNo(e.target.value)}
+                      disabled={payCreatePv}
+                    />
+                  </label>
+                  <label className="flex items-end gap-2 pb-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={payCreatePv}
+                      onChange={(e) => setPayCreatePv(e.target.checked)}
+                    />
+                    ไม่มีเอกสาร — สร้างใบสำคัญจ่าย
+                  </label>
+                </div>
+              )}
+            </fieldset>
             <div className="sm:col-span-2">
               <button
-                type="submit"
-                disabled={pending}
+                type="button"
+                disabled={paySaving || pending}
+                onClick={() => void onSavePurchasePayment()}
                 className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
               >
-                {pending ? "กำลังบันทึก…" : "บันทึกการจ่าย + ลงสมุดเงินสด"}
+                {paySaving ? "กำลังบันทึก…" : "บันทึกการจ่าย + ลงสมุดเงินสด"}
               </button>
             </div>
-          </form>
+          </div>
         ) : (
           <p className="text-sm text-emerald-800">จ่ายครบมูลค่าสัญญาแล้ว — ไม่มียอดคงค้าง</p>
         )}

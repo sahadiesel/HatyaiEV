@@ -374,13 +374,12 @@ export async function saveCommercialDocumentClient(
 
     if (number) {
       const vatType =
-        meta.vatScheme === "MARGIN"
-          ? ("MARGIN_VAT" as const)
-          : meta.vatScheme === "FULL_SALE"
-            ? ("FULL_VAT" as const)
-            : meta.vatScheme === "STANDARD"
-              ? ("FULL_VAT" as const)
-              : null;
+        meta.vatScheme === "MARGIN" ||
+        meta.vatScheme === "FULL_SALE" ||
+        meta.vatScheme === "STANDARD" ||
+        (meta.vatRatePercent != null && meta.vatRatePercent > 0)
+          ? ("FULL_VAT" as const)
+          : null;
       const invRef = meta.taxInvoiceNumber ? ` อ้างอิงใบกำกับ ${meta.taxInvoiceNumber}` : "";
       const netCash = Math.max(0, roundMoney2(totalAmount - whtAmt));
       const receiveChannel =
@@ -873,11 +872,11 @@ export async function assignDocumentNumberClient(
       vehicleId: meta.vehicleId || null,
       entityId: existing.clientId,
       vatType:
-        meta.vatScheme === "MARGIN"
-          ? "MARGIN_VAT"
-          : meta.vatScheme === "FULL_SALE" || meta.vatScheme === "STANDARD"
-            ? "FULL_VAT"
-            : null,
+        meta.vatScheme === "MARGIN" ||
+        meta.vatScheme === "FULL_SALE" ||
+        meta.vatScheme === "STANDARD"
+          ? "FULL_VAT"
+          : null,
       channel: receiveChannel,
       bankAccountId:
         existing.kind === "RECEIPT"

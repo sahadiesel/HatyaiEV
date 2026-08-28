@@ -17,72 +17,67 @@ export function calcVehicleTotalCost(vehicle: Pick<VehicleRecord, "purchasePrice
 }
 
 /**
- * กำไรขั้นต้นเบื้องต้น = ราคาตั้งขาย − ต้นทุนรวม − ค่าคอมมิชชั่น
- * (ก่อนหักภาษี / ก่อนขายจริง)
+ * แยก VAT จากราคารวมภาษี (เช่น ตั้งขาย 80,000 รวม VAT 7%)
+ * ภาษีขาย = ยอดรวม × 7/107
  */
-export function calcGrossProfitEstimate(opts: {
-  expectedSalePrice: string | number;
-  totalCost: number;
-  commissionAmount: string | number;
-}): number {
-  const sale = parseAmount(opts.expectedSalePrice);
-  const commission = parseAmount(opts.commissionAmount);
-  return roundMoney2(sale - opts.totalCost - commission);
+export function extractInclusiveVat(totalInclusive: number, vatRatePercent = 7) {
+  const total = roundMoney2(totalInclusive);
+  const vatAmount = roundMoney2((total * vatRatePercent) / (100 + vatRatePercent));
+  const priceBeforeVat = roundMoney2(total - vatAmount);
+  return { total, vatAmount, priceBeforeVat };
 }
 
 /**
- * VAT ตามประเภทการซื้อเข้า (ป.111 Margin Scheme)
- *
- * - ซื้อจากบุคคลธรรมดา: VAT จากกำไรขั้นต้น (Margin Scheme)
- *   margin = ราคาขาย − ต้นทุนรวม, VAT = margin × 7/107
- * - ซื้อจากบริษัท VAT 7%: VAT จากยอดขายเต็ม (ราคาขาย × 7/107 ถ้า inclusive
- *   หรือ ราคาขายก่อน VAT × 7% — ที่นี่ใช้ราคาตั้งขายเป็นยอดรวม VAT รวมแล้ว)
- *
- * คืนค่าทั้งกรณีขายแบบรวม VAT (ภาษีขายรถยนต์มือสองทั่วไป)
+ * VAT เมื่อขายในนามบริษัทจด VAT — ต้องออกใบกำกับภาษี
+ * คิดภาษีขายจากยอดขายเต็ม (ราคารวม VAT) × 7/107
+ * ไม่ใช้ Margin Scheme ป.111 (แม้ซื้อจากบุคคลไม่มีใบกำกับ)
  */
 export function calcSaleVat(opts: {
-  purchaseType: VehiclePurchaseType;
+  purchaseType?: VehiclePurchaseType;
   salePriceInclusive: number;
   totalCost: number;
   vatRatePercent?: number;
 }): {
-  scheme: "MARGIN" | "FULL";
+  scheme: "FULL";
   salePriceInclusive: number;
   taxableBase: number;
   vatAmount: number;
   priceBeforeVat: number;
+  /** กำไรขั้นต้นหลังแยก VAT = ราคาก่อน VAT − ต้นทุน */
   margin: number;
+  /** ภาษีซื้อ (โดยทั่วไป 0 ถ้าซื้อจากบุคคลไม่มีใบกำกับ) */
+  inputVatHint: number;
 } {
   const rate = opts.vatRatePercent ?? 7;
   const sale = roundMoney2(opts.salePriceInclusive);
   const cost = roundMoney2(opts.totalCost);
-
-  if (opts.purchaseType === "INDIVIDUAL_NO_VAT") {
-    // Margin Scheme: VAT = (ขาย − ต้นทุน) × rate/(100+rate)
-    const margin = roundMoney2(Math.max(0, sale - cost));
-    const vatAmount = roundMoney2((margin * rate) / (100 + rate));
-    const taxableBase = roundMoney2(margin - vatAmount);
-    return {
-      scheme: "MARGIN",
-      salePriceInclusive: sale,
-      taxableBase,
-      vatAmount,
-      priceBeforeVat: roundMoney2(sale - vatAmount),
-      margin,
-    };
-  }
-
-  // ซื้อจากบริษัทมี VAT — คิด VAT จากยอดขายเต็ม (ราคารวม VAT)
-  const vatAmount = roundMoney2((sale * rate) / (100 + rate));
-  const priceBeforeVat = roundMoney2(sale - vatAmount);
+  const { vatAmount, priceBeforeVat } = extractInclusiveVat(sale, rate);
   return {
     scheme: "FULL",
     salePriceInclusive: sale,
     taxableBase: priceBeforeVat,
     vatAmount,
     priceBeforeVat,
-    margin: roundMoney2(sale - cost),
+    margin: roundMoney2(priceBeforeVat - cost),
+    inputVatHint: 0,
   };
+}
+
+/**
+ * กำไรขั้นต้น = ราคาก่อน VAT − ต้นทุนรวม − ค่าคอมมิชชั่น
+ * (ราคาตั้งขายถือว่ารวม VAT 7% แล้ว)
+ */
+export function calcGrossProfitEstimate(opts: {
+  expectedSalePrice: string | number;
+  totalCost: number;
+  commissionAmount: string | number;
+  vatRatePercent?: number;
+}): number {
+  const sale = parseAmount(opts.expectedSalePrice);
+  const commission = parseAmount(opts.commissionAmount);
+  if (sale <= 0) return roundMoney2(0 - opts.totalCost - commission);
+  const { priceBeforeVat } = extractInclusiveVat(sale, opts.vatRatePercent ?? 7);
+  return roundMoney2(priceBeforeVat - opts.totalCost - commission);
 }
 
 /** สรุปตัวเลขสำหรับแสดงบนการ์ดรถ */
@@ -90,11 +85,6 @@ export function summarizeVehicleEconomics(vehicle: VehicleRecord) {
   const totalCost = calcVehicleTotalCost(vehicle);
   const expectedSale = parseAmount(vehicle.expectedSalePrice);
   const commission = parseAmount(vehicle.commissionAmount);
-  const grossProfit = calcGrossProfitEstimate({
-    expectedSalePrice: expectedSale,
-    totalCost,
-    commissionAmount: commission,
-  });
   const saleVat =
     expectedSale > 0
       ? calcSaleVat({
@@ -103,13 +93,18 @@ export function summarizeVehicleEconomics(vehicle: VehicleRecord) {
           totalCost,
         })
       : null;
+  const grossProfit = calcGrossProfitEstimate({
+    expectedSalePrice: expectedSale,
+    totalCost,
+    commissionAmount: commission,
+  });
 
   return { totalCost, expectedSale, commission, grossProfit, saleVat };
 }
 
 export const PURCHASE_TYPE_LABELS: Record<VehiclePurchaseType, string> = {
-  INDIVIDUAL_NO_VAT: "บุคคลธรรมดา (ไม่มี VAT / Margin Scheme)",
-  COMPANY_VAT_7: "บริษัทจด VAT 7%",
+  INDIVIDUAL_NO_VAT: "บุคคลธรรมดา (ซื้อไม่มีใบกำกับ — ภาษีซื้อ = 0)",
+  COMPANY_VAT_7: "บริษัทจด VAT 7% (ซื้อมีใบกำกับ)",
 };
 
 export const VEHICLE_STATUS_LABELS: Record<string, string> = {

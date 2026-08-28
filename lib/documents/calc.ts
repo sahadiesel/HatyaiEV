@@ -56,12 +56,11 @@ export function withholdingVatRatePercent(meta: {
 }
 
 /**
- * VAT รถยนต์มือสองตามประเภทการซื้อเข้า (ป.111)
- * - INDIVIDUAL_NO_VAT → Margin Scheme: VAT จากกำไรขั้นต้น × 7/107
- * - COMPANY_VAT_7 → VAT จากยอดขายเต็ม × 7/107 (ราคารวม VAT)
+ * VAT เมื่อขายรถยนต์ในนามบริษัทจด VAT — ออกใบกำกับภาษีเต็มรูป
+ * ภาษีขาย = ยอดขายรวม VAT × 7/107 (ไม่ใช้ Margin Scheme)
  */
 export function calcVehicleSaleVatTotals(opts: {
-  purchaseType: "INDIVIDUAL_NO_VAT" | "COMPANY_VAT_7";
+  purchaseType?: "INDIVIDUAL_NO_VAT" | "COMPANY_VAT_7";
   salePriceInclusive: number;
   totalCost: number;
   vatRatePercent?: number;
@@ -69,21 +68,6 @@ export function calcVehicleSaleVatTotals(opts: {
   const rate = opts.vatRatePercent ?? 7;
   const sale = roundMoney2(opts.salePriceInclusive);
   const cost = roundMoney2(opts.totalCost);
-
-  if (opts.purchaseType === "INDIVIDUAL_NO_VAT") {
-    const margin = roundMoney2(Math.max(0, sale - cost));
-    const vatAmount = roundMoney2((margin * rate) / (100 + rate));
-    const subtotal = roundMoney2(sale - vatAmount);
-    return {
-      scheme: "MARGIN" as const,
-      subtotal,
-      vatAmount,
-      totalAmount: sale,
-      margin,
-      taxableBase: roundMoney2(margin - vatAmount),
-    };
-  }
-
   const vatAmount = roundMoney2((sale * rate) / (100 + rate));
   const subtotal = roundMoney2(sale - vatAmount);
   return {
@@ -91,7 +75,7 @@ export function calcVehicleSaleVatTotals(opts: {
     subtotal,
     vatAmount,
     totalAmount: sale,
-    margin: roundMoney2(sale - cost),
+    margin: roundMoney2(subtotal - cost),
     taxableBase: subtotal,
   };
 }

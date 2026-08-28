@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import type { VehicleRecord } from "@/lib/domain-types";
 import { deleteVehicleClient, listVehiclesClient } from "@/lib/vehicles-client";
+import { reconcileAllVehiclePurchaseAmountsClient } from "@/lib/vehicles/purchase-amount-sync";
 import {
   COST_CATEGORY_LABELS,
   formatBaht,
@@ -25,21 +26,24 @@ export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
 
   function reload() {
     setLoading(true);
-    void listVehiclesClient().then((rows) => {
-      setRowsAll(rows.length > 0 ? rows : vehicles);
-      setLoading(false);
-    });
+    void listVehiclesClient()
+      .then((rows) => reconcileAllVehiclePurchaseAmountsClient(rows.length > 0 ? rows : vehicles))
+      .then((rows) => {
+        setRowsAll(rows);
+        setLoading(false);
+      });
   }
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    void listVehiclesClient().then((rows) => {
-      if (cancelled) return;
-      if (rows.length > 0) setRowsAll(rows);
-      else if (vehicles.length > 0) setRowsAll(vehicles);
-      setLoading(false);
-    });
+    void listVehiclesClient()
+      .then((rows) => reconcileAllVehiclePurchaseAmountsClient(rows.length > 0 ? rows : vehicles))
+      .then((rows) => {
+        if (cancelled) return;
+        setRowsAll(rows);
+        setLoading(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -220,7 +224,11 @@ export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
                   <p className="mt-3 text-xs text-slate-500">
                     {PURCHASE_TYPE_LABELS[v.purchaseType]}
                     {eco.saleVat && (
-                      <> · VAT ประมาณ ฿{formatBaht(eco.saleVat.vatAmount)} ({eco.saleVat.scheme})</>
+                      <>
+                        {" "}
+                        · VAT นำส่ง ฿{formatBaht(eco.saleVat.vatAmount)} · ก่อน VAT ฿
+                        {formatBaht(eco.saleVat.priceBeforeVat)}
+                      </>
                     )}
                   </p>
                   <p
@@ -267,7 +275,7 @@ export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
                       <p className="font-mono text-xs text-slate-500">{v.code}</p>
                     </td>
                     <td className="px-3 py-2 text-xs">
-                      {v.purchaseType === "INDIVIDUAL_NO_VAT" ? "บุคคล / Margin" : "บริษัท VAT 7%"}
+                      {v.purchaseType === "INDIVIDUAL_NO_VAT" ? "ซื้อบุคคล" : "ซื้อบริษัท VAT"}
                     </td>
                     <td className="px-3 py-2 text-right font-semibold tabular-nums">
                       {formatBaht(eco.totalCost)}

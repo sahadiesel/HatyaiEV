@@ -4,7 +4,17 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { BrandModelSelect } from "@/components/vehicles/BrandModelSelect";
-import type { EntityRecord, VehiclePurchaseType, VehicleStatus } from "@/lib/domain-types";
+import {
+  CASH_ACCOUNT_ID,
+  channelForAccountId,
+  listBankAccountsClient,
+} from "@/lib/bank-accounts-client";
+import type {
+  BankAccountRecord,
+  EntityRecord,
+  VehiclePurchaseType,
+  VehicleStatus,
+} from "@/lib/domain-types";
 import { listEntitiesClient } from "@/lib/entities-client";
 import { entityHasRoleGroup } from "@/lib/entity-roles";
 import {
@@ -28,7 +38,13 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
   const [purchasePrice, setPurchasePrice] = useState("");
   const [contractAmount, setContractAmount] = useState("");
   const [payNow, setPayNow] = useState("");
+  const [payTouched, setPayTouched] = useState(false);
   const [createPv, setCreatePv] = useState(false);
+  const [hasVat, setHasVat] = useState(false);
+  const [billNo, setBillNo] = useState("");
+  const [receiptNo, setReceiptNo] = useState("");
+  const [banks, setBanks] = useState<BankAccountRecord[]>([]);
+  const [payAccountId, setPayAccountId] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -44,14 +60,60 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
     };
   }, [entities]);
 
+  useEffect(() => {
+    void listBankAccountsClient().then((rows) => {
+      setBanks(rows);
+      const primary =
+        rows.find((b) => b.isPrimary && b.kind !== "CASH") ||
+        rows.find((b) => b.kind !== "CASH");
+      setPayAccountId((prev) => prev || primary?.id || CASH_ACCOUNT_ID);
+    });
+  }, []);
+
+  useEffect(() => {
+    setHasVat(purchaseType === "COMPANY_VAT_7");
+    if (purchaseType === "COMPANY_VAT_7") setCreatePv(false);
+  }, [purchaseType]);
+
   const obligation = useMemo(() => {
     const c = Number(String(contractAmount).replace(/,/g, "")) || 0;
     const p = Number(String(purchasePrice).replace(/,/g, "")) || 0;
     return c > 0 ? c : p;
   }, [contractAmount, purchasePrice]);
 
+  useEffect(() => {
+    if (!payTouched && obligation > 0) {
+      setPayNow(String(obligation));
+    }
+  }, [obligation, payTouched]);
+
   const payAmount = Number(String(payNow).replace(/,/g, "")) || 0;
   const remainingPreview = Math.max(0, obligation - payAmount);
+
+  const sellers = useMemo(
+    () =>
+      entityOptions
+        .filter((e) => entityHasRoleGroup(e.roles, "SELLER_SUPPLIER"))
+        .sort((a, b) => a.name.localeCompare(b.name, "th")),
+    [entityOptions],
+  );
+
+  const payAccountOptions = useMemo(() => {
+    const opts: { id: string; label: string }[] = [
+      { id: CASH_ACCOUNT_ID, label: "เงินสดหน้าร้าน" },
+    ];
+    for (const b of banks) {
+      if (b.kind === "CASH") {
+        opts.push({ id: b.id, label: `เงินสด · ${b.accountName}` });
+      } else {
+        opts.push({
+          id: b.id,
+          label: `${b.bankName} ${b.accountNumber}${b.isPrimary ? " · หลัก" : ""}`,
+        });
+      }
+    }
+    return opts;
+  }, [banks]);
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -67,11 +129,29 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
       setMsg("ยอดจ่ายครั้งนี้เกินมูลค่าสัญญา");
       return;
     }
+
     const fd = new FormData(e.currentTarget);
-    const billNo = String(fd.get("billNo") ?? "").trim();
-    if (payAmount > 0 && createPv && !billNo && !String(fd.get("sellerEntityId") ?? "").trim()) {
-      setMsg("สร้างใบสำคัญจ่ายต้องเลือกผู้ขาย");
-      return;
+    const sellerEntityId = String(fd.get("sellerEntityId") ?? "").trim();
+
+    if (payAmount > 0) {
+      if (!payAccountId) {
+        setMsg("เลือกบัญชีที่ต้องการตัดเงิน");
+        return;
+      }
+      if (hasVat) {
+        if (!billNo.trim()) {
+          setMsg("มี VAT — กรอกเลขที่บิล / ใบกำกับภาษี");
+          return;
+        }
+        if (!receiptNo.trim()) {
+          setMsg("มี VAT — กรอกเลขที่ใบเสร็จ");
+          return;
+        }
+      }
+      if (createPv && !hasVat && !sellerEntityId) {
+        setMsg("สร้างใบสำคัญจ่ายต้องเลือกผู้ขาย");
+        return;
+      }
     }
 
     startTransition(async () => {
@@ -88,7 +168,7 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
         mileage: String(fd.get("mileage") ?? ""),
         status: "IN_STOCK" as VehicleStatus,
         purchaseType,
-        sellerEntityId: String(fd.get("sellerEntityId") ?? "").trim() || null,
+        sellerEntityId: sellerEntityId || null,
         purchaseDate: String(fd.get("purchaseDate") ?? ""),
         purchasePrice: price,
         purchaseContractAmount: contract,
@@ -107,11 +187,17 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
       }
 
       if (payAmount > 0) {
+        const channel = channelForAccountId(payAccountId, banks);
+        const bankAccountId = payAccountId === CASH_ACCOUNT_ID ? null : payAccountId;
         const pay = await addVehiclePurchasePaymentClient(res.id, {
           date: String(fd.get("purchaseDate") ?? "") || undefined,
           amount: payAmount,
-          billNo,
-          createPaymentVoucher: createPv && !billNo,
+          billNo: billNo.trim() || null,
+          receiptNo: receiptNo.trim() || null,
+          createPaymentVoucher: createPv && !hasVat,
+          hasVat,
+          channel,
+          bankAccountId,
         });
         if (!pay.ok) {
           setMsg(`บันทึกรถแล้ว แต่จ่ายเงินไม่สำเร็จ: ${pay.message}`);
@@ -123,14 +209,6 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
       router.push(`/vehicles/${res.id}`);
     });
   }
-
-  const sellers = useMemo(
-    () =>
-      entityOptions
-        .filter((e) => entityHasRoleGroup(e.roles, "SELLER_SUPPLIER"))
-        .sort((a, b) => a.name.localeCompare(b.name, "th")),
-    [entityOptions],
-  );
 
   return (
     <form
@@ -184,7 +262,7 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
       <fieldset className="space-y-3 rounded-md border border-slate-200 p-4">
         <legend className="px-1 text-sm font-semibold text-slate-800">ข้อมูลการซื้อเข้า / สัญญา</legend>
         <p className="text-xs text-slate-500">
-          มูลค่าสัญญาและราคาซื้อเป็นต้นทุนรถ — ไม่ตัดสมุดเงินสดจนกว่าจะบันทึกการจ่ายด้านล่าง
+          มูลค่าสัญญาและราคาซื้อเป็นต้นทุนรถ — การตัดสมุดเงินสดอยู่ส่วนจ่ายเงินด้านล่าง
         </p>
         <label className="block text-sm">
           <span className="mb-1 block text-slate-600">ประเภทการซื้อ *</span>
@@ -202,20 +280,20 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
           </select>
           <p className="mt-1 text-xs text-slate-500">
             {purchaseType === "INDIVIDUAL_NO_VAT"
-              ? "ตอนขายจะใช้ Margin Scheme (ป.111) คิด VAT จากกำไรขั้นต้น"
-              : "ตอนขายจะคิด VAT จากยอดขายเต็มจำนวน"}
+              ? "ซื้อจากบุคคล — ไม่มีภาษีซื้อ · ตอนขายออกใบกำกับบริษัท คิด VAT จากยอดขายเต็ม × 7/107"
+              : "ซื้อจากบริษัทมีใบกำกับ · ตอนขายออกใบกำกับบริษัท คิด VAT จากยอดขายเต็ม × 7/107"}
           </p>
         </label>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="text-sm">
-            <span className="mb-1 block text-slate-600">ผู้ขาย (Entity)</span>
+            <span className="mb-1 block text-slate-600">ผู้ขาย *</span>
             <select name="sellerEntityId" className={inp} defaultValue="" disabled={loadingEntities}>
               <option value="">
                 {loadingEntities
                   ? "กำลังโหลด…"
                   : sellers.length === 0
                     ? "— ยังไม่มีผู้ขายในคู่ค้า —"
-                    : "— เลือก —"}
+                    : "— เลือกผู้ขาย —"}
               </option>
               {sellers.map((e) => (
                 <option key={e.id} value={e.id}>
@@ -225,12 +303,14 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
             </select>
             {!loadingEntities && sellers.length === 0 ? (
               <p className="mt-1 text-xs text-slate-500">
-                เพิ่มคู่ค้าบทบาทผู้ขาย/ซัพพลายเออร์ที่เมนู{" "}
+                แสดงเฉพาะคู่ค้าบทบาทผู้ขาย/ซัพพลายเออร์ — เพิ่มที่เมนู{" "}
                 <Link href="/entities" className="text-blue-800 underline">
                   คู่ค้า
                 </Link>
               </p>
-            ) : null}
+            ) : (
+              <p className="mt-1 text-xs text-slate-500">แสดงเฉพาะผู้ขาย/ซัพพลายเออร์</p>
+            )}
           </label>
           <label className="text-sm">
             <span className="mb-1 block text-slate-600">วันที่ซื้อ</span>
@@ -285,9 +365,9 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
       </fieldset>
 
       <fieldset className="space-y-3 rounded-md border border-amber-200 bg-amber-50/40 p-4">
-        <legend className="px-1 text-sm font-semibold text-slate-800">จ่ายเงินค่าซื้อครั้งนี้</legend>
+        <legend className="px-1 text-sm font-semibold text-slate-800">จ่ายเงินค่าซื้อ + ตัดสมุดเงินสด</legend>
         <p className="text-xs text-slate-600">
-          ตัดสมุดเงินสดเฉพาะยอดที่จ่ายจริง — เหลือค้างจ่ายได้ แล้วกลับมาจ่ายทีหลังได้หลายครั้ง
+          ใส่ยอดจ่ายและเลือกบัญชีที่ตัดเงิน — เหลือค้างจ่ายได้ แล้วกลับมาจ่ายทีหลังได้หลายครั้ง
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="text-sm">
@@ -295,7 +375,10 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
             <input
               className={inp}
               value={payNow}
-              onChange={(e) => setPayNow(e.target.value)}
+              onChange={(e) => {
+                setPayTouched(true);
+                setPayNow(e.target.value);
+              }}
               placeholder="0 = ยังไม่จ่าย"
             />
           </label>
@@ -309,25 +392,98 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
               {payAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })}
             </p>
           </div>
+
           {payAmount > 0 && (
             <>
-              <label className="text-sm">
-                <span className="mb-1 block text-slate-600">เลขที่ใบเสร็จ / ใบกำกับภาษี</span>
-                <input
-                  name="billNo"
+              <label className="text-sm sm:col-span-2">
+                <span className="mb-1 block text-slate-600">ตัดเงินจากบัญชี *</span>
+                <select
                   className={inp}
-                  placeholder="ถ้ามีจากผู้ขาย"
-                  disabled={createPv}
-                />
+                  value={payAccountId}
+                  onChange={(e) => setPayAccountId(e.target.value)}
+                  required
+                >
+                  {payAccountOptions.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
               </label>
-              <label className="flex items-end gap-2 pb-2 text-sm text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={createPv}
-                  onChange={(e) => setCreatePv(e.target.checked)}
-                />
-                ไม่มีใบเสร็จ/ใบกำกับ — สร้างใบสำคัญจ่าย
-              </label>
+
+              <fieldset className="sm:col-span-2 space-y-2 rounded-md border border-slate-200 bg-white px-3 py-3">
+                <legend className="px-1 text-sm font-medium text-slate-800">ภาษีมูลค่าเพิ่ม *</legend>
+                <div className="flex flex-wrap gap-4 text-sm text-slate-800">
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="hasVat"
+                      checked={!hasVat}
+                      onChange={() => {
+                        setHasVat(false);
+                      }}
+                    />
+                    ไม่มี VAT
+                  </label>
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="hasVat"
+                      checked={hasVat}
+                      onChange={() => {
+                        setHasVat(true);
+                        setCreatePv(false);
+                      }}
+                    />
+                    มี VAT
+                  </label>
+                </div>
+                {hasVat ? (
+                  <div className="grid gap-3 sm:grid-cols-2 pt-1">
+                    <label className="text-sm">
+                      <span className="mb-1 block text-slate-600">เลขที่บิล / ใบกำกับภาษี *</span>
+                      <input
+                        className={inp}
+                        value={billNo}
+                        onChange={(e) => setBillNo(e.target.value)}
+                        placeholder="เช่น INV-001"
+                        required
+                      />
+                    </label>
+                    <label className="text-sm">
+                      <span className="mb-1 block text-slate-600">เลขที่ใบเสร็จ *</span>
+                      <input
+                        className={inp}
+                        value={receiptNo}
+                        onChange={(e) => setReceiptNo(e.target.value)}
+                        placeholder="เช่น RE-001"
+                        required
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <div className="grid gap-3 sm:grid-cols-2 pt-1">
+                    <label className="text-sm">
+                      <span className="mb-1 block text-slate-600">เลขที่เอกสาร (ถ้ามี)</span>
+                      <input
+                        className={inp}
+                        value={billNo}
+                        onChange={(e) => setBillNo(e.target.value)}
+                        placeholder="ใบเสร็จ/เอกสารอ้างอิง"
+                        disabled={createPv}
+                      />
+                    </label>
+                    <label className="flex items-end gap-2 pb-2 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={createPv}
+                        onChange={(e) => setCreatePv(e.target.checked)}
+                      />
+                      ไม่มีเอกสาร — สร้างใบสำคัญจ่าย
+                    </label>
+                  </div>
+                )}
+              </fieldset>
             </>
           )}
         </div>
@@ -348,7 +504,7 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
         {pending
           ? "กำลังบันทึก…"
           : payAmount > 0
-            ? "บันทึกรับรถ + จ่ายเงินครั้งนี้"
+            ? "บันทึกและลงสมุดเงินสด (จ่ายซื้อรถ)"
             : "บันทึกรับรถเข้าสต็อก (ยังไม่ตัดเงินสด)"}
       </button>
     </form>

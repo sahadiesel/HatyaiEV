@@ -429,9 +429,7 @@ export function CommercialDocumentForm({
         <div className="text-right space-y-1">
           {isVehicleVatScheme && (
             <p className="mb-2 max-w-sm text-left text-xs text-amber-800">
-              {meta.vatScheme === "MARGIN"
-                ? `Margin Scheme (ป.111): VAT จากกำไรขั้นต้น · ต้นทุนอ้างอิง ฿${(meta.totalCostSnapshot ?? 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}`
-                : "VAT จากยอดขายเต็มจำนวน (ซื้อจากบริษัท VAT 7%)"}
+              {`VAT จากยอดขายเต็ม × 7/107 (ออกใบกำกับบริษัท) · ต้นทุนอ้างอิง ฿${(meta.totalCostSnapshot ?? 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}`}
               {" · "}ยอดในบรรทัด = ราคารวม VAT
             </p>
           )}

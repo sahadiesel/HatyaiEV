@@ -60,8 +60,10 @@ export type VehiclePurchasePayment = {
   id: string;
   date: string;
   amount: string;
-  /** เลขที่ใบเสร็จ/ใบกำกับจากผู้ขาย */
+  /** เลขที่ใบกำกับภาษี / บิลจากผู้ขาย */
   billNo?: string | null;
+  /** เลขที่ใบเสร็จรับเงิน */
+  receiptNo?: string | null;
   paymentVoucherDocumentId?: string | null;
   paymentVoucherDocumentNumber?: string | null;
   cashbookEntryId?: string | null;

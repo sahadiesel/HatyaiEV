@@ -22,9 +22,17 @@ import {
   listVehiclesClient,
   updateVehicleFieldsClient,
 } from "@/lib/vehicles-client";
+import { reconcileVehiclePurchaseFromContractClient } from "@/lib/vehicles/purchase-amount-sync";
 
 const inp =
   "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
+
+function amountsDifferPreview(vehicle: VehicleRecord, contractAmount: number): boolean {
+  return (
+    Math.abs(parseAmount(vehicle.purchasePrice) - contractAmount) > 0.009 ||
+    Math.abs(parseAmount(vehicle.purchaseContractAmount) - contractAmount) > 0.009
+  );
+}
 
 export function PurchaseContractForm({
   vehicleId: initialVehicleId = "",
@@ -70,7 +78,12 @@ export function PurchaseContractForm({
       const vid = doc?.vehicleId || initialVehicleId || "";
       setVehicleId(vid);
 
-      const v = vid ? (await getVehicleClient(vid)) || vehs.find((x) => x.id === vid) || null : null;
+      const v0 = vid ? (await getVehicleClient(vid)) || vehs.find((x) => x.id === vid) || null : null;
+      let v = v0;
+      if (v0 && doc) {
+        const rec = await reconcileVehiclePurchaseFromContractClient(v0, doc);
+        v = rec.vehicle;
+      }
       setVehicle(v);
       if (v) {
         const s = v.sellerEntityId ? ents.find((e) => e.id === v.sellerEntityId) || null : null;
@@ -98,16 +111,21 @@ export function PurchaseContractForm({
       setSeller(null);
       return;
     }
-    const [v, ents, legal] = await Promise.all([
+    const [v0, ents, legal] = await Promise.all([
       getVehicleClient(id),
       listEntitiesClient(),
       listLegalDocsClient("PURCHASE_CONTRACT"),
     ]);
+    const doc = legal.find((r) => r.vehicleId === id) || null;
+    setExisting(doc);
+    let v = v0;
+    if (v0 && doc) {
+      const rec = await reconcileVehiclePurchaseFromContractClient(v0, doc);
+      v = rec.vehicle;
+    }
     setVehicle(v);
     if (!v) return;
     setSeller(v.sellerEntityId ? ents.find((e) => e.id === v.sellerEntityId) || null : null);
-    const doc = legal.find((r) => r.vehicleId === id) || null;
-    setExisting(doc);
     if (doc) {
       setIssueDate(doc.issueDate || v.purchaseDate || new Date().toISOString().slice(0, 10));
       setAmount(doc.amount || String(calcPurchasePaymentSummary(v).obligation || ""));
@@ -275,9 +293,25 @@ export function PurchaseContractForm({
       </div>
 
       <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
-        ราคาในสัญญานี้ผูกกับ <strong>มูลค่าสัญญา</strong> ในหน้ารถคันเดียวกัน —{" "}
-        <strong>ไม่ซิงก์กับ cashbook</strong> ถ้าจ่าย/รับเงินผิด ให้ไปแก้หรือลบในสมุดเงินสดเอง
+        ราคาในสัญญานี้เป็นแหล่งความจริง — บันทึกแล้วจะอัปเดต{" "}
+        <strong>ราคาซื้อ / มูลค่าสัญญา</strong> ในหน้ารถ คำนวณต้นทุน และฐาน Margin ป.111 ให้ตรงกัน ·{" "}
+        <strong>ไม่ซิงก์กับ cashbook</strong> ถ้าจ่าย/รับเงินผิด ให้ไปแก้ในสมุดเงินสดเอง
       </p>
+
+      {vehicle && contractAmount > 0 && (
+        <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          บนหน้ารถตอนนี้: ราคาซื้อ ฿{formatBaht(parseAmount(vehicle.purchasePrice))} · มูลค่าสัญญา ฿
+          {formatBaht(parseAmount(vehicle.purchaseContractAmount))}
+          {amountsDifferPreview(vehicle, contractAmount) ? (
+            <span className="font-medium text-amber-800">
+              {" "}
+              — ไม่ตรงกับราคาในสัญญา ฿{formatBaht(contractAmount)} (กดบันทึกเพื่อซิงก์)
+            </span>
+          ) : (
+            <span className="text-emerald-700"> — สอดคล้องกับสัญญาแล้ว</span>
+          )}
+        </p>
+      )}
 
       {msg && (
         <p

@@ -21,6 +21,7 @@ import {
 import { savePaymentVoucherClient } from "@/lib/documents-client";
 import type {
   CashChannel,
+  CashVatType,
   EntityRecord,
   VehicleCostLine,
   VehiclePurchasePayment,
@@ -74,6 +75,7 @@ function parsePurchasePayments(raw: unknown): VehiclePurchasePayment[] {
       date: String(row.date ?? ""),
       amount: String(row.amount ?? "0"),
       billNo: row.billNo ? String(row.billNo) : null,
+      receiptNo: row.receiptNo ? String(row.receiptNo) : null,
       paymentVoucherDocumentId: row.paymentVoucherDocumentId
         ? String(row.paymentVoucherDocumentId)
         : null,
@@ -290,6 +292,9 @@ export async function addVehicleCostLineClient(
     withholdingAmount?: number | null;
     withholdingDocumentNumber?: string | null;
     paymentVoucherDocumentNumber?: string | null;
+    channel?: CashChannel;
+    bankAccountId?: string | null;
+    vatType?: CashVatType | null;
   },
 ): Promise<
   { ok: true; vehicle: VehicleRecord; line: VehicleCostLine } | { ok: false; message: string }
@@ -323,7 +328,16 @@ export async function addVehicleCostLineClient(
       : Math.max(0, gross - whtAmt);
   let cashbookEntryId: string | null = null;
   if (opts?.postCashbook && cashOut > 0) {
-    const primary = await ensurePrimaryBankAccount();
+    const channel: CashChannel = opts.channel === "CASH" ? "CASH" : "BANK";
+    let bankAccountId: string | null =
+      opts.bankAccountId?.trim() ? opts.bankAccountId.trim() : null;
+    if (channel === "BANK" && !bankAccountId) {
+      const primary = await ensurePrimaryBankAccount();
+      bankAccountId = primary?.id ?? null;
+    }
+    if (channel === "CASH" && !bankAccountId) {
+      bankAccountId = null;
+    }
     const entryType =
       newLine.category === "LABOR"
         ? "LABOR"
@@ -343,9 +357,9 @@ export async function addVehicleCostLineClient(
       description: `ต้นทุนรถ: ${newLine.description || newLine.category}${billHint}${whtHint}`,
       vehicleId,
       entityId: newLine.entityId,
-      channel: "BANK",
-      bankAccountId: primary?.id ?? null,
-      vatType: "NO_VAT",
+      channel,
+      bankAccountId,
+      vatType: opts?.vatType ?? "NO_VAT",
       billNo: newLine.billNo,
       documentId: newLine.paymentVoucherDocumentId ?? newLine.withholdingDocumentId ?? null,
       documentKind: newLine.paymentVoucherDocumentId
@@ -393,6 +407,7 @@ export type PurchasePaymentInput = {
   date?: string;
   amount: string | number;
   billNo?: string | null;
+  receiptNo?: string | null;
   /** ไม่มีใบเสร็จ/ใบกำกับ — สร้างใบสำคัญจ่าย */
   createPaymentVoucher?: boolean;
   notes?: string;
@@ -400,6 +415,8 @@ export type PurchasePaymentInput = {
   /** ช่องทางตัดบัญชี — เงินสด / ธนาคาร */
   channel?: CashChannel;
   bankAccountId?: string | null;
+  /** มี VAT เต็มยอด หรือไม่มี */
+  hasVat?: boolean;
 };
 
 /** บันทึกจ่ายค่าซื้อรถทีละงวด → ตัด cashbook ตามยอดจ่าย + บิลหรือใบสำคัญจ่าย */
@@ -410,114 +427,130 @@ export async function addVehiclePurchasePaymentClient(
   | { ok: true; vehicle: VehicleRecord; payment: VehiclePurchasePayment; remaining: number }
   | { ok: false; message: string }
 > {
-  const existing = await getVehicleClient(vehicleId);
-  if (!existing) return { ok: false, message: "ไม่พบรถคันนี้" };
+  try {
+    const existing = await getVehicleClient(vehicleId);
+    if (!existing) return { ok: false, message: "ไม่พบรถคันนี้" };
 
-  const amount = Number(String(input.amount).replace(/,/g, "")) || 0;
-  if (amount <= 0) return { ok: false, message: "จำนวนที่จ่ายต้องมากกว่า 0" };
+    const amount = Number(String(input.amount).replace(/,/g, "")) || 0;
+    if (amount <= 0) return { ok: false, message: "จำนวนที่จ่ายต้องมากกว่า 0" };
 
-  const summary = calcPurchasePaymentSummary(existing);
-  if (amount > summary.remaining + 0.001) {
-    return {
-      ok: false,
-      message: `จ่ายเกินยอดคงค้าง (คงเหลือ ฿${summary.remaining.toFixed(2)})`,
-    };
-  }
+    const summary = calcPurchasePaymentSummary(existing);
+    if (amount > summary.remaining + 0.001) {
+      return {
+        ok: false,
+        message: `จ่ายเกินยอดคงค้าง (คงเหลือ ฿${summary.remaining.toFixed(2)})`,
+      };
+    }
 
-  const billNo = (input.billNo ?? "").trim();
-  const createPv = Boolean(input.createPaymentVoucher) && !billNo;
-  let seller: EntityRecord | null = null;
-  if (existing.sellerEntityId) {
-    const ents = await listEntitiesClient();
-    seller = ents.find((e) => e.id === existing.sellerEntityId) || null;
-  }
-  if (createPv && !seller) {
-    return { ok: false, message: "สร้างใบสำคัญจ่ายต้องมีผู้ขายในข้อมูลรถ" };
-  }
+    const billNo = (input.billNo ?? "").trim();
+    const receiptNo = (input.receiptNo ?? "").trim();
+    const createPv = Boolean(input.createPaymentVoucher) && !billNo && !receiptNo;
+    let seller: EntityRecord | null = null;
+    if (existing.sellerEntityId) {
+      const ents = await listEntitiesClient();
+      seller = ents.find((e) => e.id === existing.sellerEntityId) || null;
+    }
+    if (createPv && !seller) {
+      return { ok: false, message: "สร้างใบสำคัญจ่ายต้องมีผู้ขายในข้อมูลรถ" };
+    }
 
-  const date = input.date || new Date().toISOString().slice(0, 10);
-  const vehicleLabel =
-    `${existing.code || ""} ${existing.brand} ${existing.model} ${existing.licensePlate || ""}`.trim();
+    const date = input.date || new Date().toISOString().slice(0, 10);
+    const vehicleLabel =
+      `${existing.code || ""} ${existing.brand} ${existing.model} ${existing.licensePlate || ""}`.trim();
 
-  const channel: CashChannel = input.channel === "CASH" ? "CASH" : "BANK";
-  let bankAccountId: string | null =
-    input.bankAccountId?.trim() ? input.bankAccountId.trim() : null;
-  if (channel === "BANK" && !bankAccountId) {
-    const primary = await ensurePrimaryBankAccount();
-    bankAccountId = primary?.id || null;
-  }
-  if (channel === "CASH" && !bankAccountId) {
-    bankAccountId = null;
-  }
+    const channel: CashChannel = input.channel === "CASH" ? "CASH" : "BANK";
+    let bankAccountId: string | null =
+      input.bankAccountId?.trim() ? input.bankAccountId.trim() : null;
+    if (channel === "BANK" && !bankAccountId) {
+      const primary = await ensurePrimaryBankAccount();
+      bankAccountId = primary?.id || null;
+    }
+    if (channel === "CASH" && !bankAccountId) {
+      bankAccountId = null;
+    }
 
-  let paymentVoucherDocumentId: string | null = null;
-  let paymentVoucherDocumentNumber: string | null = null;
+    let paymentVoucherDocumentId: string | null = null;
+    let paymentVoucherDocumentNumber: string | null = null;
 
-  if (createPv && seller) {
-    const pvMeta = {
-      ...defaultPaymentVoucherMeta(),
-      payeeName: seller.name,
-      payeeAddress: seller.address,
-      payeeTaxId: seller.taxId,
-      payeePhone: seller.phone,
-      paymentMethod: channel === "CASH" ? ("CASH" as const) : ("TRANSFER" as const),
-      purpose: `จ่ายค่าซื้อรถ — ${vehicleLabel}`,
-      vehicleId: existing.id,
-      vehicleLabel,
-    };
-    const pv = await savePaymentVoucherClient({
-      issueDate: date,
-      totalAmount: amount,
-      metaJson: JSON.stringify(pvMeta),
-      assignNumber: true,
-      issuedByName: input.issuedByName,
-      postCashbook: false,
-      notes: `งวดจ่ายค่าซื้อรถ ${vehicleLabel}`,
+    if (createPv && seller) {
+      const pvMeta = {
+        ...defaultPaymentVoucherMeta(),
+        payeeName: seller.name,
+        payeeAddress: seller.address,
+        payeeTaxId: seller.taxId,
+        payeePhone: seller.phone,
+        paymentMethod: channel === "CASH" ? ("CASH" as const) : ("TRANSFER" as const),
+        purpose: `จ่ายค่าซื้อรถ — ${vehicleLabel}`,
+        vehicleId: existing.id,
+        vehicleLabel,
+      };
+      const pv = await savePaymentVoucherClient({
+        issueDate: date,
+        totalAmount: amount,
+        metaJson: JSON.stringify(pvMeta),
+        assignNumber: true,
+        issuedByName: input.issuedByName,
+        postCashbook: false,
+        notes: `งวดจ่ายค่าซื้อรถ ${vehicleLabel}`,
+      });
+      if (!pv.ok) return pv;
+      paymentVoucherDocumentId = pv.id;
+      paymentVoucherDocumentNumber = pv.number;
+    }
+
+    const docHints = [
+      billNo ? `บิล ${billNo}` : "",
+      receiptNo ? `ใบเสร็จ ${receiptNo}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    const billHint = docHints ? ` ${docHints}` : "";
+    const hasVat =
+      input.hasVat === true ||
+      (input.hasVat !== false && existing.purchaseType === "COMPANY_VAT_7");
+    const cash = await postCashbookEntryClient({
+      entryDate: date,
+      direction: "OUT",
+      entryType: "VEHICLE_PURCHASE",
+      amount,
+      description: `จ่ายค่าซื้อรถ: ${vehicleLabel}${billHint}`.trim(),
+      vehicleId,
+      entityId: existing.sellerEntityId,
+      channel,
+      bankAccountId,
+      vatType: hasVat ? "FULL_VAT" : "NO_VAT",
+      billNo: billNo || receiptNo || null,
+      documentId: paymentVoucherDocumentId,
+      documentKind: paymentVoucherDocumentId ? "PAYMENT_VOUCHER" : null,
+      documentNumber: paymentVoucherDocumentNumber,
+      paymentVoucherDocumentId,
+      paymentVoucherDocumentNumber,
     });
-    if (!pv.ok) return pv;
-    paymentVoucherDocumentId = pv.id;
-    paymentVoucherDocumentNumber = pv.number;
+    if (!cash.ok) return cash;
+
+    const payment: VehiclePurchasePayment = {
+      id: newClientId(),
+      date,
+      amount: amount.toFixed(2),
+      billNo: billNo || null,
+      receiptNo: receiptNo || null,
+      paymentVoucherDocumentId,
+      paymentVoucherDocumentNumber,
+      cashbookEntryId: cash.id,
+      notes: input.notes?.trim() || "",
+      createdAt: new Date().toISOString(),
+    };
+    const purchasePayments = [...(existing.purchasePayments ?? []), payment];
+    const saved = await updateVehicleFieldsClient(vehicleId, { purchasePayments });
+    if (!saved.ok) return saved;
+
+    const vehicle = { ...existing, purchasePayments };
+    const remaining = calcPurchasePaymentSummary(vehicle).remaining;
+    return { ok: true, vehicle, payment, remaining };
+  } catch (e) {
+    console.error("[addVehiclePurchasePaymentClient]", e);
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
   }
-
-  const billHint = billNo ? ` บิล ${billNo}` : "";
-  const cash = await postCashbookEntryClient({
-    entryDate: date,
-    direction: "OUT",
-    entryType: "VEHICLE_PURCHASE",
-    amount,
-    description: `จ่ายค่าซื้อรถ: ${vehicleLabel}${billHint}`.trim(),
-    vehicleId,
-    entityId: existing.sellerEntityId,
-    channel,
-    bankAccountId,
-    vatType: existing.purchaseType === "INDIVIDUAL_NO_VAT" ? "NO_VAT" : "FULL_VAT",
-    billNo: billNo || null,
-    documentId: paymentVoucherDocumentId,
-    documentKind: paymentVoucherDocumentId ? "PAYMENT_VOUCHER" : null,
-    documentNumber: paymentVoucherDocumentNumber,
-    paymentVoucherDocumentId,
-    paymentVoucherDocumentNumber,
-  });
-  if (!cash.ok) return cash;
-
-  const payment: VehiclePurchasePayment = {
-    id: newClientId(),
-    date,
-    amount: amount.toFixed(2),
-    billNo: billNo || null,
-    paymentVoucherDocumentId,
-    paymentVoucherDocumentNumber,
-    cashbookEntryId: cash.id,
-    notes: input.notes?.trim() || "",
-    createdAt: new Date().toISOString(),
-  };
-  const purchasePayments = [...(existing.purchasePayments ?? []), payment];
-  const saved = await updateVehicleFieldsClient(vehicleId, { purchasePayments });
-  if (!saved.ok) return saved;
-
-  const vehicle = { ...existing, purchasePayments };
-  const remaining = calcPurchasePaymentSummary(vehicle).remaining;
-  return { ok: true, vehicle, payment, remaining };
 }
 
 /** ลบรถออกจากสต็อก (admin) — ลบรายการ cashbook ที่ผูก vehicleId ด้วย */

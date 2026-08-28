@@ -328,9 +328,11 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
           entity,
           billNo,
           createPaymentVoucher: createPvNoBill,
+          withholdingEnabled: expenseCategory === "LABOR",
           vehicleId: "",
           vehicleLabel: description || "รายจ่าย",
           issuedByName: userName,
+          channel: channelForAccountId(selectedAccountId || CASH_ACCOUNT_ID, banks),
         });
         if (!docs.ok) {
           setMsgOk(false);

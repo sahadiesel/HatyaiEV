@@ -9,15 +9,15 @@ export function calcInclusiveVatBreakdown(totalInclusive: number, vatRatePercent
 }
 
 /**
- * ใบกำกับภาษีมัดจำขาย (แสดงให้ลูกค้า) + VAT นำส่งตาม ป.111 (หลังบ้าน)
- * - ลูกค้าได้ใบกำกับเต็มรูปจากยอดมัดจำรวม VAT
- * - บริษัทนำส่ง VAT จากสัดส่วนกำไรขั้นต้น (ขายสัญญา − ซื้อสัญญา) × สัดส่วนมัดจำ
+ * ใบกำกับภาษีมัดจำขาย (แสดงลูกค้า) + VAT นำส่ง
+ * ขายในนามบริษัทจด VAT — คิดภาษีขายจากยอดมัดจำ/ยอดขายเต็ม × 7/107
+ * (ไม่ใช้ Margin Scheme ป.111)
  */
 export function calcSaleDepositTaxInvoice(opts: {
   saleContractAmount: number;
   purchaseContractAmount: number;
   depositInclusive: number;
-  purchaseType: "INDIVIDUAL_NO_VAT" | "COMPANY_VAT_7";
+  purchaseType?: "INDIVIDUAL_NO_VAT" | "COMPANY_VAT_7";
   vatRatePercent?: number;
 }) {
   const rate = opts.vatRatePercent ?? 7;
@@ -26,28 +26,14 @@ export function calcSaleDepositTaxInvoice(opts: {
   const deposit = roundMoney2(opts.depositInclusive);
   const customerInvoice = calcInclusiveVatBreakdown(deposit, rate);
 
-  if (opts.purchaseType === "COMPANY_VAT_7") {
-    return {
-      customerInvoice,
-      remittanceVat: customerInvoice.vatAmount,
-      taxBasisAmount: customerInvoice.base,
-      vatType: "FULL_VAT" as const,
-      marginPortion: roundMoney2(Math.max(0, sale - purchase) * (sale > 0 ? deposit / sale : 0)),
-    };
-  }
-
-  const fullMargin = roundMoney2(Math.max(0, sale - purchase));
-  const depositRatio = sale > 0 ? deposit / sale : 0;
-  const marginPortion = roundMoney2(fullMargin * depositRatio);
-  const remittanceVat = roundMoney2((marginPortion * rate) / (100 + rate));
-  const taxBasisAmount = roundMoney2(marginPortion - remittanceVat);
-
   return {
     customerInvoice,
-    remittanceVat,
-    taxBasisAmount,
-    vatType: "MARGIN_VAT" as const,
-    marginPortion,
+    remittanceVat: customerInvoice.vatAmount,
+    taxBasisAmount: customerInvoice.base,
+    vatType: "FULL_VAT" as const,
+    marginPortion: roundMoney2(
+      Math.max(0, sale - purchase) * (sale > 0 ? deposit / sale : 0),
+    ),
   };
 }
 

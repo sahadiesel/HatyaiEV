@@ -51,8 +51,8 @@ export default async function NewTaxInvoicePage({
         totalCost,
         vatRatePercent: 7,
       });
-      const scheme =
-        vehicle.purchaseType === "INDIVIDUAL_NO_VAT" ? ("MARGIN" as const) : ("FULL_SALE" as const);
+      // ขายในนามบริษัท — ออกใบกำกับเต็มรูป คิด VAT จากยอดขาย × 7/107
+      const scheme = "FULL_SALE" as const;
       const isDeposit = Number.isFinite(depositParam) && depositParam > 0;
       const lines: DocumentLineItem[] = [
         {
@@ -80,10 +80,7 @@ export default async function NewTaxInvoicePage({
         clientId: null,
         lines,
         meta,
-        notes:
-          scheme === "MARGIN"
-            ? `VAT Margin Scheme (ป.111): ฐานซื้อสัญญา ${purchaseBase.toFixed(2)} · กำไรขั้นต้น ${vatInfo.margin.toFixed(2)} · VAT นำส่ง ${vatInfo.vatAmount.toFixed(2)}`
-            : `VAT จากยอดขายเต็ม · VAT ${vatInfo.vatAmount.toFixed(2)} บาท`,
+        notes: `VAT จากยอดขายเต็ม (บริษัทจด VAT ออกใบกำกับ) · ราคาก่อน VAT ${vatInfo.subtotal.toFixed(2)} · VAT นำส่ง ${vatInfo.vatAmount.toFixed(2)} บาท · กำไรหลังแยก VAT ${vatInfo.margin.toFixed(2)}`,
       };
     }
   }
@@ -92,11 +89,8 @@ export default async function NewTaxInvoicePage({
     <div className="space-y-3">
       {sp.vehicleId && initial && (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          ดึงข้อมูลจากรถในสต็อกแล้ว —{" "}
-          {initial.meta.vatScheme === "MARGIN"
-            ? "ใช้สูตร Margin Scheme (ป.111) จากกำไรขั้นต้น"
-            : "คิด VAT จากยอดขายเต็ม (ซื้อจากบริษัท VAT 7%)"}
-          . ปรับจำนวนเงิน/ลูกค้าให้ถูกต้องก่อนบันทึก
+          ดึงข้อมูลจากรถในสต็อกแล้ว — คิด VAT จากยอดขายเต็ม × 7/107 (ออกใบกำกับในนามบริษัท) ·
+          ปรับจำนวนเงิน/ลูกค้าให้ถูกต้องก่อนบันทึก
         </p>
       )}
       <CommercialDocumentForm
