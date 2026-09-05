@@ -516,7 +516,7 @@ export function VehicleDetailClient({
               >
                 ฿{formatBaht(eco.grossProfit)}
               </p>
-              <p className="mt-0.5 text-[11px] text-slate-500">หลังแยก VAT จากราคาตั้งขาย − ต้นทุน</p>
+              <p className="mt-0.5 text-[11px] text-slate-500">ราคาก่อนภาษี − ต้นทุนไม่รวมภาษี − คอม</p>
             </div>
           </div>
           {eco.saleVat && (

@@ -16,7 +16,6 @@ import type {
   VehicleStatus,
 } from "@/lib/domain-types";
 import { listEntitiesClient } from "@/lib/entities-client";
-import { entityHasRoleGroup } from "@/lib/entity-roles";
 import {
   addVehiclePurchasePaymentClient,
   saveVehicleClient,
@@ -93,7 +92,8 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
   const sellers = useMemo(
     () =>
       entityOptions
-        .filter((e) => entityHasRoleGroup(e.roles, "SELLER_SUPPLIER"))
+        // เฉพาะบทบาทผู้ขาย — ไม่ดึงลูกค้า/ผู้รับจ้าง/ซัพพลายเออร์อย่างเดียว
+        .filter((e) => (e.roles ?? []).includes("SELLER"))
         .sort((a, b) => a.name.localeCompare(b.name, "th")),
     [entityOptions],
   );
@@ -303,13 +303,14 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
             </select>
             {!loadingEntities && sellers.length === 0 ? (
               <p className="mt-1 text-xs text-slate-500">
-                แสดงเฉพาะคู่ค้าบทบาทผู้ขาย/ซัพพลายเออร์ — เพิ่มที่เมนู{" "}
+                แสดงเฉพาะคู่ค้าบทบาทผู้ขาย — เพิ่ม/แก้ที่เมนู{" "}
                 <Link href="/entities" className="text-blue-800 underline">
                   คู่ค้า
                 </Link>
+                {" "}แล้วติ๊ก «ผู้ขาย/ซัพพลายเออร์»
               </p>
             ) : (
-              <p className="mt-1 text-xs text-slate-500">แสดงเฉพาะผู้ขาย/ซัพพลายเออร์</p>
+              <p className="mt-1 text-xs text-slate-500">แสดงเฉพาะคู่ค้าที่ตั้งบทบาทเป็นผู้ขาย</p>
             )}
           </label>
           <label className="text-sm">

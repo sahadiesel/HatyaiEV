@@ -8,6 +8,7 @@ import type {
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { firestoreCollections } from "@/lib/firestore-collections";
 import { newEntityId } from "@/lib/new-id";
+import { compareVehiclesByBrandModelPlate } from "@/lib/vehicles/calc";
 
 function db() {
   return getAdminFirestore();
@@ -135,18 +136,13 @@ export async function listVehicles(): Promise<VehicleRecord[]> {
   const firestore = db();
   if (!firestore) return [];
   try {
-    const snap = await firestore.collection(firestoreCollections.vehicles).orderBy("code", "desc").get();
-    return snap.docs.map((doc) => parseVehicle(doc.id, doc.data() as Record<string, unknown>));
-  } catch {
-    try {
-      const snap = await firestore.collection(firestoreCollections.vehicles).get();
-      return snap.docs
-        .map((doc) => parseVehicle(doc.id, doc.data() as Record<string, unknown>))
-        .sort((a, b) => String(b.code ?? "").localeCompare(String(a.code ?? "")));
-    } catch (e) {
-      console.error("[listVehicles]", e);
-      return [];
-    }
+    const snap = await firestore.collection(firestoreCollections.vehicles).get();
+    return snap.docs
+      .map((doc) => parseVehicle(doc.id, doc.data() as Record<string, unknown>))
+      .sort(compareVehiclesByBrandModelPlate);
+  } catch (e) {
+    console.error("[listVehicles]", e);
+    return [];
   }
 }
 

@@ -64,25 +64,41 @@ export function calcSaleVat(opts: {
 }
 
 /**
- * กำไรขั้นต้น = ราคาก่อน VAT − ต้นทุนรวม − ค่าคอมมิชชั่น
+ * ต้นทุนไม่รวมภาษี — ซื้อบุคคล = ยอดเต็ม, ซื้อบริษัท VAT = แยก VAT จากราคาซื้อ
+ * ต้นทุนซ่อมสะสมใช้ยอดที่บันทึก (ส่วนใหญ่เป็นยอดจ่ายจริง)
+ */
+export function calcCostExcludingVat(vehicle: Pick<VehicleRecord, "purchaseType" | "purchasePrice" | "costLines">): number {
+  const purchase = parseAmount(vehicle.purchasePrice);
+  const repair = sumCostLines(vehicle.costLines ?? []);
+  if (vehicle.purchaseType === "COMPANY_VAT_7" && purchase > 0) {
+    const { priceBeforeVat } = extractInclusiveVat(purchase, 7);
+    return roundMoney2(priceBeforeVat + repair);
+  }
+  return roundMoney2(purchase + repair);
+}
+
+/**
+ * กำไรขั้นต้นประมาณ = ราคาขายก่อน VAT − ต้นทุนไม่รวมภาษี − ค่าคอม
  * (ราคาตั้งขายถือว่ารวม VAT 7% แล้ว)
  */
 export function calcGrossProfitEstimate(opts: {
   expectedSalePrice: string | number;
-  totalCost: number;
+  /** ต้นทุนไม่รวมภาษี */
+  totalCostExVat: number;
   commissionAmount: string | number;
   vatRatePercent?: number;
 }): number {
   const sale = parseAmount(opts.expectedSalePrice);
   const commission = parseAmount(opts.commissionAmount);
-  if (sale <= 0) return roundMoney2(0 - opts.totalCost - commission);
+  if (sale <= 0) return roundMoney2(0 - opts.totalCostExVat - commission);
   const { priceBeforeVat } = extractInclusiveVat(sale, opts.vatRatePercent ?? 7);
-  return roundMoney2(priceBeforeVat - opts.totalCost - commission);
+  return roundMoney2(priceBeforeVat - opts.totalCostExVat - commission);
 }
 
 /** สรุปตัวเลขสำหรับแสดงบนการ์ดรถ */
 export function summarizeVehicleEconomics(vehicle: VehicleRecord) {
   const totalCost = calcVehicleTotalCost(vehicle);
+  const costExVat = calcCostExcludingVat(vehicle);
   const expectedSale = parseAmount(vehicle.expectedSalePrice);
   const commission = parseAmount(vehicle.commissionAmount);
   const saleVat =
@@ -90,16 +106,27 @@ export function summarizeVehicleEconomics(vehicle: VehicleRecord) {
       ? calcSaleVat({
           purchaseType: vehicle.purchaseType,
           salePriceInclusive: expectedSale,
-          totalCost,
+          totalCost: costExVat,
         })
       : null;
+  const priceBeforeVat = saleVat?.priceBeforeVat ?? 0;
+  const vatAmount = saleVat?.vatAmount ?? 0;
   const grossProfit = calcGrossProfitEstimate({
     expectedSalePrice: expectedSale,
-    totalCost,
+    totalCostExVat: costExVat,
     commissionAmount: commission,
   });
 
-  return { totalCost, expectedSale, commission, grossProfit, saleVat };
+  return {
+    totalCost,
+    costExVat,
+    expectedSale,
+    commission,
+    priceBeforeVat,
+    vatAmount,
+    grossProfit,
+    saleVat,
+  };
 }
 
 export const PURCHASE_TYPE_LABELS: Record<VehiclePurchaseType, string> = {
@@ -123,6 +150,21 @@ export const COST_CATEGORY_LABELS: Record<string, string> = {
 
 export function formatBaht(n: number): string {
   return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** เรียงรถ: ยี่ห้อ → รุ่น → ทะเบียน */
+export function compareVehiclesByBrandModelPlate(
+  a: Pick<VehicleRecord, "brand" | "model" | "licensePlate">,
+  b: Pick<VehicleRecord, "brand" | "model" | "licensePlate">,
+): number {
+  const brand = (a.brand || "").localeCompare(b.brand || "", "th", { sensitivity: "base" });
+  if (brand !== 0) return brand;
+  const model = (a.model || "").localeCompare(b.model || "", "th", { sensitivity: "base" });
+  if (model !== 0) return model;
+  return (a.licensePlate || "").localeCompare(b.licensePlate || "", "th", {
+    numeric: true,
+    sensitivity: "base",
+  });
 }
 
 /** ยอดที่ต้องจ่ายตามสัญญา (สัญญาซื้อ หรือราคาซื้อ) */

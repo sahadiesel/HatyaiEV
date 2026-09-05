@@ -5,6 +5,9 @@ import { sendPasswordResetEmail } from "firebase/auth";
 import { useState } from "react";
 import { isValidEmail, normalizeEmail } from "@/lib/auth-utils";
 import { getFirebaseAuth } from "@/lib/firebase-auth";
+import { isEmailTaken } from "@/lib/users-firestore";
+
+const NOT_REGISTERED_MSG = "ไม่เคยลงทะเบียนไว้กรุณาลงทะเบียนผู้ใช้ใหม่";
 
 export default function ForgotPasswordPage() {
   const [pending, setPending] = useState(false);
@@ -32,12 +35,18 @@ export default function ForgotPasswordPage() {
     }
 
     try {
+      const registered = await isEmailTaken(email);
+      if (!registered) {
+        setError(NOT_REGISTERED_MSG);
+        return;
+      }
+
       await sendPasswordResetEmail(auth, email);
       setMessage(`ส่งลิงก์รีเซ็ตรหัสผ่านไปที่ ${email} แล้ว — ตรวจสอบกล่องจดหมาย`);
     } catch (err) {
       const raw = err instanceof Error ? err.message : "ส่งอีเมลไม่สำเร็จ";
-      if (raw.includes("user-not-found")) {
-        setError("ไม่พบบัญชีที่ใช้อีเมลนี้");
+      if (raw.includes("user-not-found") || raw.includes("auth/user-not-found")) {
+        setError(NOT_REGISTERED_MSG);
       } else {
         setError(raw);
       }

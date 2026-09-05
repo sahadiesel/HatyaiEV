@@ -32,7 +32,7 @@ import type {
 import { listEntitiesClient } from "@/lib/entities-client";
 import { getFirestoreDb } from "@/lib/firebase";
 import { firestoreCollections } from "@/lib/firestore-collections";
-import { calcPurchasePaymentSummary } from "@/lib/vehicles/calc";
+import { calcPurchasePaymentSummary, compareVehiclesByBrandModelPlate } from "@/lib/vehicles/calc";
 
 function newClientId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -141,7 +141,7 @@ export async function listVehiclesClient(): Promise<VehicleRecord[]> {
     const snap = await getDocs(collection(db, firestoreCollections.vehicles));
     return snap.docs
       .map((d) => parseVehicleRecord(d.id, d.data() as Record<string, unknown>))
-      .sort((a, b) => (a.licensePlate || a.code || "").localeCompare(b.licensePlate || b.code || "", "th"));
+      .sort(compareVehiclesByBrandModelPlate);
   } catch (e) {
     console.error("[listVehiclesClient]", e);
     return [];

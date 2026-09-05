@@ -49,7 +49,11 @@ export async function listVehicleBrandsClient(): Promise<VehicleBrandRecord[]> {
     return snap.docs
       .map((d) => parseBrand(d.id, d.data() as Record<string, unknown>))
       .filter((b) => b.name)
-      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, "th"));
+      .map((b) => ({
+        ...b,
+        models: [...b.models].sort((a, c) => a.localeCompare(c, "th", { sensitivity: "base", numeric: true })),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, "th", { sensitivity: "base", numeric: true }));
   } catch (e) {
     console.error("[listVehicleBrandsClient]", e);
     return [];

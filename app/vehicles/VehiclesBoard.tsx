@@ -11,9 +11,11 @@ import {
   formatBaht,
   PURCHASE_TYPE_LABELS,
   calcPurchasePaymentSummary,
+  compareVehiclesByBrandModelPlate,
   summarizeVehicleEconomics,
   VEHICLE_STATUS_LABELS,
 } from "@/lib/vehicles/calc";
+import { printVehicleList } from "@/lib/vehicles/print-list";
 
 export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
   const { isAdmin } = useAuth();
@@ -50,11 +52,14 @@ export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
   }, [vehicles]);
 
   const rows = useMemo(() => {
-    return rowsAll.filter((v) => {
-      if (statusFilter === "ALL") return true;
-      if (statusFilter === "ACTIVE") return v.status === "IN_STOCK" || v.status === "RESERVED";
-      return v.status === statusFilter;
-    });
+    return rowsAll
+      .filter((v) => {
+        if (statusFilter === "ALL") return true;
+        if (statusFilter === "ACTIVE") return v.status === "IN_STOCK" || v.status === "RESERVED";
+        return v.status === statusFilter;
+      })
+      .slice()
+      .sort(compareVehiclesByBrandModelPlate);
   }, [rowsAll, statusFilter]);
 
   function onDelete(v: VehicleRecord) {
@@ -81,6 +86,12 @@ export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
     });
   }
 
+  function onPrintList() {
+    void printVehicleList({ vehicles: rows, statusFilter }).catch((e) => {
+      setMsg(e instanceof Error ? e.message : "พิมพ์รายการไม่สำเร็จ");
+    });
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -90,12 +101,22 @@ export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
             ดูต้นทุนรวมแบบ Real-time ต่อคัน — เพิ่มต้นทุนสะสม ตั้งราคาขาย และหักค่าคอม
           </p>
         </div>
-        <Link
-          href="/vehicles/new"
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
-        >
-          + รับรถเข้าสต็อก
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={onPrintList}
+            disabled={rows.length === 0}
+            className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+          >
+            พิมพ์รายการ
+          </button>
+          <Link
+            href="/vehicles/new"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+          >
+            + รับรถเข้าสต็อก
+          </Link>
+        </div>
       </div>
 
       {msg && (
@@ -153,7 +174,7 @@ export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
       )}
 
       {view === "cards" && (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {rows.map((v) => {
             const eco = summarizeVehicleEconomics(v);
             const pay = calcPurchasePaymentSummary(v);
@@ -204,11 +225,11 @@ export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
 
                   <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                     <div>
-                      <p className="text-xs text-slate-500">ราคาตั้งขาย</p>
+                      <p className="text-xs text-slate-500">ราคาตั้งขาย (รวม VAT)</p>
                       <p className="font-medium tabular-nums">฿{formatBaht(eco.expectedSale)}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-slate-500">กำไรขั้นต้นประมาณ</p>
+                      <p className="text-xs text-slate-500">กำไรประมาณ</p>
                       <p
                         className={
                           eco.grossProfit >= 0
@@ -219,17 +240,19 @@ export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
                         ฿{formatBaht(eco.grossProfit)}
                       </p>
                     </div>
+                    <div>
+                      <p className="text-xs text-slate-500">ราคาก่อนภาษี</p>
+                      <p className="font-medium tabular-nums">฿{formatBaht(eco.priceBeforeVat)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">ภาษี 7%</p>
+                      <p className="font-medium tabular-nums">฿{formatBaht(eco.vatAmount)}</p>
+                    </div>
                   </div>
 
                   <p className="mt-3 text-xs text-slate-500">
                     {PURCHASE_TYPE_LABELS[v.purchaseType]}
-                    {eco.saleVat && (
-                      <>
-                        {" "}
-                        · VAT นำส่ง ฿{formatBaht(eco.saleVat.vatAmount)} · ก่อน VAT ฿
-                        {formatBaht(eco.saleVat.priceBeforeVat)}
-                      </>
-                    )}
+                    {" · "}กำไร = ราคาก่อนภาษี − ต้นทุนไม่รวมภาษี
                   </p>
                   <p
                     className={
@@ -250,14 +273,17 @@ export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
 
       {view === "table" && (
         <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
-          <table className="min-w-[900px] w-full text-sm">
+          <table className="min-w-[1100px] w-full text-sm">
             <thead className="border-b bg-slate-50 text-left text-slate-600">
               <tr>
-                <th className="px-3 py-2">รถ</th>
                 <th className="px-3 py-2">ประเภทซื้อ</th>
+                <th className="px-3 py-2">รถ</th>
+                <th className="px-3 py-2 text-right">ต้นทุนรถ</th>
+                <th className="px-3 py-2 text-right">ต้นทุนซ่อม</th>
                 <th className="px-3 py-2 text-right">ต้นทุนรวม</th>
                 <th className="px-3 py-2 text-right">ตั้งขาย</th>
-                <th className="px-3 py-2 text-right">คอม</th>
+                <th className="px-3 py-2 text-right">ราคาก่อนภาษี</th>
+                <th className="px-3 py-2 text-right">ภาษี 7%</th>
                 <th className="px-3 py-2 text-right">กำไรประมาณ</th>
                 <th className="px-3 py-2">สถานะ</th>
                 {isAdmin && <th className="px-3 py-2" />}
@@ -266,22 +292,27 @@ export function VehiclesBoard({ vehicles }: { vehicles: VehicleRecord[] }) {
             <tbody>
               {rows.map((v) => {
                 const eco = summarizeVehicleEconomics(v);
+                const purchaseCost = Number(v.purchasePrice) || 0;
+                const repairCost = eco.totalCost - purchaseCost;
                 return (
                   <tr key={v.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="px-3 py-2 text-xs whitespace-nowrap">
+                      {v.purchaseType === "INDIVIDUAL_NO_VAT" ? "ซื้อบุคคล" : "ซื้อบริษัท VAT"}
+                    </td>
                     <td className="px-3 py-2">
                       <Link href={`/vehicles/${v.id}`} className="font-medium text-blue-800 hover:underline">
                         {v.brand} {v.model} · {v.licensePlate || "—"}
                       </Link>
                       <p className="font-mono text-xs text-slate-500">{v.code}</p>
                     </td>
-                    <td className="px-3 py-2 text-xs">
-                      {v.purchaseType === "INDIVIDUAL_NO_VAT" ? "ซื้อบุคคล" : "ซื้อบริษัท VAT"}
-                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatBaht(purchaseCost)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatBaht(repairCost)}</td>
                     <td className="px-3 py-2 text-right font-semibold tabular-nums">
                       {formatBaht(eco.totalCost)}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">{formatBaht(eco.expectedSale)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatBaht(eco.commission)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatBaht(eco.priceBeforeVat)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatBaht(eco.vatAmount)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{formatBaht(eco.grossProfit)}</td>
                     <td className="px-3 py-2">{VEHICLE_STATUS_LABELS[v.status]}</td>
                     {isAdmin && (
