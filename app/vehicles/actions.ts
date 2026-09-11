@@ -52,8 +52,9 @@ export async function saveVehicleAction(formData: FormData) {
   };
 
   if (id) {
-    const patch = { ...payload };
-    delete (patch as { purchasePayments?: unknown }).purchasePayments;
+    // ไม่ทับประวัติงวดจ่ายเมื่อแก้ไขจากฟอร์มนี้
+    const { purchasePayments: _omitPayments, ...patch } = payload;
+    void _omitPayments;
     const result = await updateVehicle(id, patch);
     if (result.ok) revalidate(id);
     return result;
