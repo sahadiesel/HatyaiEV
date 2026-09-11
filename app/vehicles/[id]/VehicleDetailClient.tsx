@@ -4,13 +4,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { PrintDocIconButton } from "@/components/PrintDocIconButton";
-import { CASH_ACCOUNT_ID, channelForAccountId, listBankAccountsClient } from "@/lib/bank-accounts-client";
+import { CASH_ACCOUNT_ID, formatPaymentAccountLabel, listBankAccountsClient, resolvePaymentAccount } from "@/lib/bank-accounts-client";
 import { calcWithholdingTotals, parseAmount } from "@/lib/documents/calc";
 import { printDocumentClient } from "@/lib/documents-client";
 import type {
   BankAccountRecord,
   EntityRecord,
   VehicleCostCategory,
+  VehiclePurchasePayment,
   VehicleRecord,
   VehicleStatus,
 } from "@/lib/domain-types";
@@ -22,6 +23,7 @@ import {
   removeVehicleCostLineClient,
   saveVehicleClient,
   updateVehicleFieldsClient,
+  updateVehiclePurchasePaymentClient,
 } from "@/lib/vehicles-client";
 import {
   calcPurchasePaymentSummary,
@@ -78,6 +80,12 @@ export function VehicleDetailClient({
   const [paySaving, setPaySaving] = useState(false);
   const [banks, setBanks] = useState<BankAccountRecord[]>([]);
   const [docPack, setDocPack] = useState<VehicleDocumentPack | null>(null);
+  const [editingPayId, setEditingPayId] = useState<string | null>(null);
+  const [editPayDate, setEditPayDate] = useState("");
+  const [editPayAmount, setEditPayAmount] = useState("");
+  const [editPayAccountId, setEditPayAccountId] = useState("");
+  const [editPayBillNo, setEditPayBillNo] = useState("");
+  const [editPayReceiptNo, setEditPayReceiptNo] = useState("");
 
   function reloadDocPack() {
     void loadVehicleDocumentPack(vehicle.id).then(async (pack) => {
@@ -104,10 +112,7 @@ export function VehicleDetailClient({
   useEffect(() => {
     void listBankAccountsClient().then((rows) => {
       setBanks(rows);
-      const primary = rows.find((b) => b.isPrimary && b.kind !== "CASH") || rows.find((b) => b.kind !== "CASH");
-      const fallback = primary?.id || CASH_ACCOUNT_ID;
-      setPayAccountId((prev) => prev || fallback);
-      setCostAccountId((prev) => prev || fallback);
+      // ไม่เลือกบัญชีอัตโนมัติ — ให้ผู้ใช้เลือกเองทุกครั้ง
     });
   }, []);
 
@@ -220,8 +225,8 @@ export function VehicleDetailClient({
 
     setPaySaving(true);
     try {
-      const channel = channelForAccountId(payAccountId, banks);
-      const bankAccountId = payAccountId === CASH_ACCOUNT_ID ? null : payAccountId;
+      const channel = resolvePaymentAccount(payAccountId, banks).channel;
+      const bankAccountId = resolvePaymentAccount(payAccountId, banks).bankAccountId;
       const entryDate =
         (document.getElementById("pay-entry-date") as HTMLInputElement | null)?.value ||
         new Date().toISOString().slice(0, 10);
@@ -247,6 +252,7 @@ export function VehicleDetailClient({
       setPayBillNo("");
       setPayReceiptNo("");
       setPayAmount("");
+      setPayAccountId("");
       const okText =
         res.remaining > 0
           ? `บันทึกจ่ายแล้ว · คงค้าง ฿${formatBaht(res.remaining)}`
@@ -279,6 +285,51 @@ export function VehicleDetailClient({
     }
     return entities;
   }, [entities, costCategory]);
+
+  function accountSelectValue(p: VehiclePurchasePayment): string {
+    if (p.bankAccountId) return p.bankAccountId;
+    if (p.channel === "CASH") return CASH_ACCOUNT_ID;
+    return "";
+  }
+
+  function startEditPayment(p: VehiclePurchasePayment) {
+    setEditingPayId(p.id);
+    setEditPayDate(p.date || "");
+    setEditPayAmount(p.amount || "");
+    setEditPayAccountId(accountSelectValue(p));
+    setEditPayBillNo(p.billNo || "");
+    setEditPayReceiptNo(p.receiptNo || "");
+  }
+
+  function cancelEditPayment() {
+    setEditingPayId(null);
+  }
+
+  function saveEditPayment() {
+    if (!editingPayId) return;
+    if (!editPayAccountId) {
+      flash(false, "เลือกบัญชีที่จ่าย");
+      return;
+    }
+    const { channel, bankAccountId } = resolvePaymentAccount(editPayAccountId, banks);
+    startTransition(async () => {
+      const res = await updateVehiclePurchasePaymentClient(vehicle.id, editingPayId, {
+        date: editPayDate,
+        amount: editPayAmount,
+        billNo: editPayBillNo || null,
+        receiptNo: editPayReceiptNo || null,
+        channel,
+        bankAccountId,
+      });
+      if (!res.ok) {
+        flash(false, res.message);
+        return;
+      }
+      setVehicle(res.vehicle);
+      setEditingPayId(null);
+      flash(true, "อัปเดตรายการจ่ายค่าซื้อแล้ว");
+    });
+  }
 
   function flash(ok: boolean, text: string) {
     setMsgOk(ok);
@@ -323,6 +374,7 @@ export function VehicleDetailClient({
     const vehicleLabel =
       `${vehicle.code || ""} ${vehicle.brand} ${vehicle.model} ${vehicle.licensePlate || ""}`.trim();
     const postCash = costPostCash;
+    const selectedAccountId = String(fd.get("costAccountId") ?? costAccountId ?? "").trim();
 
     startTransition(async () => {
       if (category === "LABOR" && !entity) {
@@ -343,7 +395,7 @@ export function VehicleDetailClient({
         flash(false, "ไม่มีเลขบิล — เลือกคู่ค้าเพื่อสร้างใบสำคัญจ่าย");
         return;
       }
-      if (postCash && !costAccountId) {
+      if (postCash && !selectedAccountId) {
         flash(false, "เลือกบัญชีที่ตัดเงิน");
         return;
       }
@@ -358,9 +410,10 @@ export function VehicleDetailClient({
         }
       }
 
-      const channel = channelForAccountId(costAccountId || CASH_ACCOUNT_ID, banks);
-      const bankAccountId =
-        !costAccountId || costAccountId === CASH_ACCOUNT_ID ? null : costAccountId;
+      const { channel, bankAccountId } = resolvePaymentAccount(
+        selectedAccountId || CASH_ACCOUNT_ID,
+        banks,
+      );
 
       const docs = await createDocsForVehicleCostExpense({
         category,
@@ -440,6 +493,7 @@ export function VehicleDetailClient({
       setCostBillNo("");
       setCostReceiptNo("");
       setCostEntityId("");
+      setCostAccountId("");
       setCostPostCash(true);
     });
   }
@@ -740,11 +794,15 @@ export function VehicleDetailClient({
               <label className="text-sm sm:col-span-2">
                 <span className="mb-1 block text-slate-600">ตัดเงินจากบัญชี *</span>
                 <select
-                  className={inp}
+                  name="costAccountId"
+                  className={costAccountId ? inp : `${inp} italic text-slate-400`}
                   value={costAccountId}
                   onChange={(e) => setCostAccountId(e.target.value)}
                   required
                 >
+                  <option value="" className="italic text-slate-400">
+                    - กรุณาเลือกบัญชี -
+                  </option>
                   {payAccountOptions.map((o) => (
                     <option key={o.id} value={o.id}>
                       {o.label}
@@ -936,36 +994,136 @@ export function VehicleDetailClient({
               <thead className="border-b bg-slate-50 text-left text-slate-600">
                 <tr>
                   <th className="px-3 py-2">วันที่</th>
-                  <th className="px-3 py-2">จำนวน</th>
+                  <th className="px-3 py-2 text-right">จำนวน</th>
+                  <th className="px-3 py-2">บัญชีที่จ่าย</th>
                   <th className="px-3 py-2">เอกสาร</th>
                   <th className="px-3 py-2" />
                 </tr>
               </thead>
               <tbody>
-                {vehicle.purchasePayments.map((p) => (
-                  <tr key={p.id} className="border-b border-slate-100">
-                    <td className="px-3 py-2">{formatDateThBE(p.date)}</td>
-                    <td className="px-3 py-2 tabular-nums">฿{formatBaht(Number(p.amount) || 0)}</td>
-                    <td className="px-3 py-2 text-xs text-slate-600">
-                      {p.billNo || p.receiptNo
-                        ? [p.billNo && `บิล ${p.billNo}`, p.receiptNo && `ใบเสร็จ ${p.receiptNo}`]
+                {vehicle.purchasePayments.map((p) => {
+                  const editing = editingPayId === p.id;
+                  return (
+                    <tr key={p.id} className="border-b border-slate-100 align-top">
+                      <td className="px-3 py-2">
+                        {editing ? (
+                          <input
+                            type="date"
+                            className={inp}
+                            value={editPayDate}
+                            onChange={(e) => setEditPayDate(e.target.value)}
+                          />
+                        ) : (
+                          formatDateThBE(p.date)
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {editing ? (
+                          <input
+                            className={`${inp} text-right`}
+                            value={editPayAmount}
+                            onChange={(e) => setEditPayAmount(e.target.value)}
+                          />
+                        ) : (
+                          <>฿{formatBaht(Number(p.amount) || 0)}</>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-slate-700">
+                        {editing ? (
+                          <select
+                            className={
+                              editPayAccountId
+                                ? inp
+                                : `${inp} italic text-slate-400`
+                            }
+                            value={editPayAccountId}
+                            onChange={(e) => setEditPayAccountId(e.target.value)}
+                          >
+                            <option value="" className="italic text-slate-400">
+                              - กรุณาเลือกบัญชี -
+                            </option>
+                            {payAccountOptions.map((o) => (
+                              <option key={o.id} value={o.id}>
+                                {o.label}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          formatPaymentAccountLabel(
+                            { channel: p.channel, bankAccountId: p.bankAccountId },
+                            banks,
+                          )
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-slate-600">
+                        {editing ? (
+                          <div className="grid gap-1">
+                            <input
+                              className={inp}
+                              placeholder="เลขบิล"
+                              value={editPayBillNo}
+                              onChange={(e) => setEditPayBillNo(e.target.value)}
+                            />
+                            <input
+                              className={inp}
+                              placeholder="เลขใบเสร็จ"
+                              value={editPayReceiptNo}
+                              onChange={(e) => setEditPayReceiptNo(e.target.value)}
+                            />
+                          </div>
+                        ) : p.billNo || p.receiptNo ? (
+                          [p.billNo && `บิล ${p.billNo}`, p.receiptNo && `ใบเสร็จ ${p.receiptNo}`]
                             .filter(Boolean)
                             .join(" · ")
-                        : p.paymentVoucherDocumentNumber
-                          ? `ใบสำคัญจ่าย ${p.paymentVoucherDocumentNumber}`
-                          : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      {p.paymentVoucherDocumentId && (
-                        <PrintDocIconButton
-                          label="จ่าย"
-                          disabled={pending}
-                          onClick={() => printDoc(p.paymentVoucherDocumentId!)}
-                        />
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                        ) : p.paymentVoucherDocumentNumber ? (
+                          `ใบสำคัญจ่าย ${p.paymentVoucherDocumentNumber}`
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right whitespace-nowrap">
+                        {editing ? (
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="button"
+                              disabled={pending}
+                              onClick={saveEditPayment}
+                              className="text-emerald-700 hover:underline disabled:opacity-50"
+                            >
+                              บันทึก
+                            </button>
+                            <button
+                              type="button"
+                              disabled={pending}
+                              onClick={cancelEditPayment}
+                              className="text-slate-500 hover:underline disabled:opacity-50"
+                            >
+                              ยกเลิก
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="button"
+                              disabled={pending}
+                              onClick={() => startEditPayment(p)}
+                              className="text-blue-800 hover:underline disabled:opacity-50"
+                            >
+                              แก้ไข
+                            </button>
+                            {p.paymentVoucherDocumentId && (
+                              <PrintDocIconButton
+                                label="จ่าย"
+                                disabled={pending}
+                                onClick={() => printDoc(p.paymentVoucherDocumentId!)}
+                              />
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1005,12 +1163,17 @@ export function VehicleDetailClient({
             <label className="text-sm sm:col-span-2">
               <span className="mb-1 block text-slate-600">ตัดจากบัญชี *</span>
               <select
-                className={inp}
+                className={payAccountId ? inp : `${inp} italic text-slate-400`}
                 value={payAccountId}
                 onChange={(e) => setPayAccountId(e.target.value)}
               >
+                <option value="" className="italic text-slate-400">
+                  - กรุณาเลือกบัญชี -
+                </option>
                 {payAccountOptions.length === 0 ? (
-                  <option value="">กำลังโหลดบัญชี…</option>
+                  <option value="" disabled>
+                    กำลังโหลดบัญชี…
+                  </option>
                 ) : (
                   payAccountOptions.map((o) => (
                     <option key={o.id} value={o.id}>

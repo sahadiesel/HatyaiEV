@@ -52,11 +52,19 @@ function parsePurchasePayments(raw: unknown) {
   if (!Array.isArray(raw)) return [];
   return raw.map((l) => {
     const row = l as Record<string, unknown>;
+    const channelRaw = String(row.channel ?? "").toUpperCase();
+    const channel =
+      channelRaw === "CASH" || channelRaw === "BANK"
+        ? (channelRaw as "CASH" | "BANK")
+        : row.bankAccountId
+          ? ("BANK" as const)
+          : null;
     return {
       id: String(row.id ?? ""),
       date: String(row.date ?? ""),
       amount: String(row.amount ?? "0"),
       billNo: row.billNo ? String(row.billNo) : null,
+      receiptNo: row.receiptNo ? String(row.receiptNo) : null,
       paymentVoucherDocumentId: row.paymentVoucherDocumentId
         ? String(row.paymentVoucherDocumentId)
         : null,
@@ -64,6 +72,8 @@ function parsePurchasePayments(raw: unknown) {
         ? String(row.paymentVoucherDocumentNumber)
         : null,
       cashbookEntryId: row.cashbookEntryId ? String(row.cashbookEntryId) : null,
+      channel,
+      bankAccountId: row.bankAccountId ? String(row.bankAccountId) : null,
       notes: row.notes ? String(row.notes) : undefined,
       createdAt: row.createdAt ? String(row.createdAt) : undefined,
     };

@@ -67,6 +67,10 @@ export type VehiclePurchasePayment = {
   paymentVoucherDocumentId?: string | null;
   paymentVoucherDocumentNumber?: string | null;
   cashbookEntryId?: string | null;
+  /** ช่องทางตัดบัญชี */
+  channel?: CashChannel | null;
+  /** บัญชีที่จ่าย (null = เงินสดหน้าร้าน เมื่อ channel=CASH) */
+  bankAccountId?: string | null;
   notes?: string;
   createdAt?: string;
 };

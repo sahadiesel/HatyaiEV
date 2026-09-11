@@ -6,8 +6,8 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { BrandModelSelect } from "@/components/vehicles/BrandModelSelect";
 import {
   CASH_ACCOUNT_ID,
-  channelForAccountId,
   listBankAccountsClient,
+  resolvePaymentAccount,
 } from "@/lib/bank-accounts-client";
 import type {
   BankAccountRecord,
@@ -62,10 +62,6 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
   useEffect(() => {
     void listBankAccountsClient().then((rows) => {
       setBanks(rows);
-      const primary =
-        rows.find((b) => b.isPrimary && b.kind !== "CASH") ||
-        rows.find((b) => b.kind !== "CASH");
-      setPayAccountId((prev) => prev || primary?.id || CASH_ACCOUNT_ID);
     });
   }, []);
 
@@ -187,8 +183,7 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
       }
 
       if (payAmount > 0) {
-        const channel = channelForAccountId(payAccountId, banks);
-        const bankAccountId = payAccountId === CASH_ACCOUNT_ID ? null : payAccountId;
+        const { channel, bankAccountId } = resolvePaymentAccount(payAccountId, banks);
         const pay = await addVehiclePurchasePaymentClient(res.id, {
           date: String(fd.get("purchaseDate") ?? "") || undefined,
           amount: payAmount,
@@ -399,11 +394,14 @@ export function NewVehicleForm({ entities }: { entities: EntityRecord[] }) {
               <label className="text-sm sm:col-span-2">
                 <span className="mb-1 block text-slate-600">ตัดเงินจากบัญชี *</span>
                 <select
-                  className={inp}
+                  className={payAccountId ? inp : `${inp} italic text-slate-400`}
                   value={payAccountId}
                   onChange={(e) => setPayAccountId(e.target.value)}
                   required
                 >
+                  <option value="" className="italic text-slate-400">
+                    - กรุณาเลือกบัญชี -
+                  </option>
                   {payAccountOptions.map((o) => (
                     <option key={o.id} value={o.id}>
                       {o.label}

@@ -213,15 +213,18 @@ async function autoPostCashClient(opts: {
   if (opts.totalAmount <= 0) return;
   if (opts.kind !== "RECEIPT" && opts.kind !== "PAYMENT_VOUCHER") return;
   const primary = await ensurePrimaryBankAccount();
-  /** เงินสด → CASH · โอน/เช็ค/ไม่ระบุ → BANK (บัญชีหลัก) */
+  /** เงินสดหน้าร้าน / กระเป๋าเงินสด → CASH · โอน → BANK */
   const channel: "CASH" | "BANK" =
-    opts.channel ?? (opts.bankAccountId ? "BANK" : "BANK");
+    opts.channel === "CASH" ? "CASH" : opts.channel === "BANK" ? "BANK" : opts.bankAccountId ? "BANK" : "BANK";
+  const explicitBankId =
+    opts.bankAccountId !== undefined && opts.bankAccountId !== null && String(opts.bankAccountId).trim()
+      ? String(opts.bankAccountId).trim()
+      : null;
+  // เงินสดหน้าร้าน = null · กระเป๋าเงินสดที่มีชื่อ = เก็บ id ไว้ · ธนาคาร = id หรือบัญชีหลักถ้าไม่ระบุ
   const bankAccountId =
     channel === "CASH"
-      ? null
-      : opts.bankAccountId !== undefined && opts.bankAccountId !== null
-        ? opts.bankAccountId
-        : primary?.id ?? null;
+      ? explicitBankId
+      : explicitBankId ?? primary?.id ?? null;
   const entryType =
     opts.kind === "RECEIPT" && opts.vehicleId ? "VEHICLE_SALE" : "DOCUMENT_AUTO";
   await postCashbookEntryClient({

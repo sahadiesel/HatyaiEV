@@ -229,6 +229,38 @@ export async function postCashbookEntryClient(
   }
 }
 
+/** อัปเดตรายการสมุดเงินสดตาม id (วันที่ / ยอด / บัญชี) */
+export async function updateCashbookEntryClient(
+  entryId: string,
+  patch: {
+    entryDate?: string;
+    amount?: string | number;
+    channel?: CashChannel;
+    bankAccountId?: string | null;
+    description?: string;
+  },
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const db = getFirestoreDb();
+  if (!db) return { ok: false, message: "ยังไม่ได้ตั้งค่า Firebase" };
+  if (!entryId) return { ok: false, message: "ไม่พบรายการเงินสด" };
+  try {
+    const data: Record<string, unknown> = { updatedAt: serverTimestamp() };
+    if (patch.entryDate) data.entryDate = toYmdLocal(patch.entryDate);
+    if (patch.amount != null) {
+      const amount = roundMoney2(parseAmount(patch.amount));
+      if (amount <= 0) return { ok: false, message: "จำนวนเงินต้องมากกว่า 0" };
+      data.amount = amount.toFixed(2);
+    }
+    if (patch.channel) data.channel = patch.channel;
+    if (patch.bankAccountId !== undefined) data.bankAccountId = patch.bankAccountId;
+    if (patch.description != null) data.description = patch.description.trim();
+    await updateDoc(doc(db, firestoreCollections.cashbookEntries, entryId), data);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export async function deleteCashbookEntryClient(id: string) {
   const db = getFirestoreDb();
   if (!db) return { ok: false as const, message: "ยังไม่ได้ตั้งค่า Firebase" };
@@ -344,17 +376,15 @@ export function calcBalancesFromEntries(
     else totalOut += amt;
 
     if (e.channel === "BANK") {
-      // ถ้า id หาย/ไม่ตรงบัญชีหลัก ให้ลงที่ยอดบัญชีหลัก
-      let bankId = e.bankAccountId;
-      const known =
-        bankId &&
-        (banksOnly.some((b) => b.id === bankId) || bankId in bankNet);
-      if (!bankId || !known) {
-        bankId = primary?.id ?? bankId;
-      }
+      // ตัดตามบัญชีที่ระบุเท่านั้น — ห้ามย้ายรายการไปบัญชีหลักเมื่อ id ไม่รู้จัก
+      // (พฤติกรรมเก่าย้ายไปบัญชีหลัก ทำให้ดูเหมือนตัดคนละบัญชี)
+      const bankId = e.bankAccountId;
       if (bankId) {
         if (!(bankId in bankNet)) bankNet[bankId] = 0;
         bankNet[bankId] += e.direction === "IN" ? amt : -amt;
+      } else if (primary?.id) {
+        if (!(primary.id in bankNet)) bankNet[primary.id] = 0;
+        bankNet[primary.id] += e.direction === "IN" ? amt : -amt;
       } else if (e.direction === "IN") {
         cashIn += amt;
       } else {

@@ -89,6 +89,25 @@ export function channelForAccountId(
   return b?.kind === "CASH" ? "CASH" : "BANK";
 }
 
+/**
+ * แปลงรหัสบัญชีที่ผู้ใช้เลือก → channel + bankAccountId ที่จะลงสมุดเงินสด
+ * ไม่แทนที่ด้วยบัญชีหลัก — ใช้บัญชีที่เลือกจริงเท่านั้น
+ */
+export function resolvePaymentAccount(
+  accountId: string | null | undefined,
+  banks: BankAccountRecord[],
+): { channel: CashChannel; bankAccountId: string | null } {
+  const id = String(accountId ?? "").trim();
+  if (!id || id === CASH_ACCOUNT_ID) {
+    return { channel: "CASH", bankAccountId: null };
+  }
+  const row = banks.find((b) => b.id === id);
+  if (row?.kind === "CASH") {
+    return { channel: "CASH", bankAccountId: id };
+  }
+  return { channel: "BANK", bankAccountId: id };
+}
+
 /** หาบัญชีหลัก (เฉพาะธนาคาร) — ใช้ id คงที่ / เลขบัญชีเดิม ถ้ามีอยู่แล้วไม่สร้างซ้ำ */
 export async function ensurePrimaryBankAccount(): Promise<BankAccountRecord | null> {
   const existing = await listBankAccountsClient();
@@ -328,8 +347,27 @@ function accountLabel(
   if (id === CASH_ACCOUNT_ID) return "เงินสดหน้าร้าน";
   const b = banks.find((x) => x.id === id);
   if (!b) return id;
-  if (b.kind === "CASH") return b.accountName || "เงินสด";
-  return `${b.bankName} ${b.accountNumber}`;
+  if (b.kind === "CASH") return `เงินสด · ${b.accountName || "เงินสด"}`;
+  return `${b.bankName} ${b.accountNumber}${b.isPrimary ? " (หลัก)" : ""}`;
+}
+
+/** ป้ายบัญชีที่จ่าย สำหรับแสดงในตาราง */
+export function formatPaymentAccountLabel(
+  opts: { channel?: string | null; bankAccountId?: string | null },
+  banks: BankAccountRecord[],
+): string {
+  const channel = opts.channel === "BANK" ? "BANK" : opts.channel === "CASH" ? "CASH" : null;
+  const bankId = opts.bankAccountId?.trim() || null;
+  if (channel === "CASH" || (!channel && !bankId)) {
+    if (bankId) {
+      const pot = banks.find((b) => b.id === bankId);
+      if (pot?.kind === "CASH") return `เงินสด · ${pot.accountName || "เงินสด"}`;
+      if (pot) return accountLabel(bankId, banks);
+    }
+    return channel === "CASH" ? "เงินสดหน้าร้าน" : "—";
+  }
+  if (bankId) return accountLabel(bankId, banks);
+  return "ธนาคาร";
 }
 
 /** โอนเงินข้ามบัญชี (เงินสด ↔ ธนาคาร / ธนาคาร ↔ ธนาคาร) */
