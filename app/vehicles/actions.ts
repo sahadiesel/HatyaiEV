@@ -52,7 +52,8 @@ export async function saveVehicleAction(formData: FormData) {
   };
 
   if (id) {
-    const { purchasePayments: _ignore, ...patch } = payload;
+    const patch = { ...payload };
+    delete (patch as { purchasePayments?: unknown }).purchasePayments;
     const result = await updateVehicle(id, patch);
     if (result.ok) revalidate(id);
     return result;

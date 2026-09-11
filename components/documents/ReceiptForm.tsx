@@ -48,7 +48,6 @@ function bankLabel(b: BankAccountRecord) {
 }
 
 export function ReceiptForm({
-  clients: _clients,
   documentId,
   taxInvoiceId: initialTaxInvoiceId,
   vehicleId,
@@ -196,7 +195,6 @@ export function ReceiptForm({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount / documentId only
   }, [documentId, initialTaxInvoiceId, vehicleId]);
 
   function applyInvoiceInitial(

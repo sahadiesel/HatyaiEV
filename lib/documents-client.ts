@@ -117,7 +117,7 @@ export async function listDocumentsClient(kind?: DocumentKind): Promise<Document
         /* ignore */
       }
     }
-    let rows = kind ? all.filter((r) => r.kind === kind) : all;
+    const rows = kind ? all.filter((r) => r.kind === kind) : all;
     rows.sort((a, b) => b.issueDate.getTime() - a.issueDate.getTime());
     return rows.slice(0, 200).map((r) => {
       const metaName =
