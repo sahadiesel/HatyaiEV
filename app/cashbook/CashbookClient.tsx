@@ -6,14 +6,21 @@ import { PrintDocIconButton } from "@/components/PrintDocIconButton";
 import {
   CASH_ACCOUNT_ID,
   channelForAccountId,
+  resolvePaymentAccount,
   sumBalanceForAccountNumber,
+  normalizeAccountNumber,
 } from "@/lib/bank-accounts-client";
 import {
   calcBalancesFromEntries,
+  balanceForAccountBefore,
   deleteCashbookEntryClient,
+  isAutoCarryNoiseEntry,
   loadCashbookDashboard,
   postCashbookEntryClient,
+  resolveAccountGroupIds,
+  updateCashbookEntryClient,
 } from "@/lib/cashbook-client";
+import { roundMoney2 } from "@/lib/documents/calc";
 import { printDocumentClient } from "@/lib/documents-client";
 import type {
   BankAccountRecord,
@@ -85,8 +92,20 @@ function matchesAccountFilter(
     return e.channel === "CASH" && e.bankAccountId === filterAccountId;
   }
   if (e.channel !== "BANK") return false;
-  if (e.bankAccountId === filterAccountId) return true;
-  if (!e.bankAccountId && primaryId === filterAccountId) return true;
+  const group = new Set(resolveAccountGroupIds(filterAccountId, banks));
+  if (e.bankAccountId && group.has(e.bankAccountId)) return true;
+  if (!e.bankAccountId && primaryId && group.has(primaryId)) return true;
+  // เลขบัญชีตรงกันแม้ id คนละตัว
+  if (e.bankAccountId) {
+    const other = banks.find((b) => b.id === e.bankAccountId);
+    if (
+      other &&
+      normalizeAccountNumber(other.accountNumber) ===
+        normalizeAccountNumber(acc.accountNumber)
+    ) {
+      return true;
+    }
+  }
   return false;
 }
 
@@ -101,6 +120,7 @@ const TYPE_LABELS: Record<string, string> = {
   PURCHASE_DEPOSIT: "มัดจำซื้อเข้า",
   SALE_DEPOSIT: "มัดจำขายออก",
   TRANSFER: "โอนข้ามบัญชี",
+  BALANCE_CARRY: "ยอดยกมา",
 };
 
 function cashbookPrintTargets(e: CashbookEntry): { whtId: string | null; pvId: string | null } {
@@ -109,6 +129,29 @@ function cashbookPrintTargets(e: CashbookEntry): { whtId: string | null; pvId: s
   if (!whtId && e.documentKind === "WITHHOLDING_TAX" && e.documentId) whtId = e.documentId;
   if (!pvId && e.documentKind === "PAYMENT_VOUCHER" && e.documentId) pvId = e.documentId;
   return { whtId, pvId };
+}
+
+/** แก้ในสมุดได้เฉพาะรายการมือที่ไม่ได้ผูกเอกสาร/รถ — ของอัตโนมัติให้แก้ที่ต้นทาง */
+function cashbookEditableHere(e: CashbookEntry): boolean {
+  if (isAutoCarryNoiseEntry(e) || e.isSystemAuto) return false;
+  if (
+    e.entryType === "DOCUMENT_AUTO" ||
+    e.entryType === "VEHICLE_PURCHASE" ||
+    e.entryType === "VEHICLE_SALE" ||
+    e.entryType === "BALANCE_CARRY" ||
+    e.entryType === "TRANSFER"
+  ) {
+    return false;
+  }
+  if (e.documentId || e.paymentVoucherDocumentId || e.withholdingDocumentId || e.vehicleId) {
+    return false;
+  }
+  return true;
+}
+
+function accountIdFromEntry(e: CashbookEntry): string {
+  if (e.bankAccountId) return e.bankAccountId;
+  return CASH_ACCOUNT_ID;
 }
 
 const VAT_LABELS: Record<string, string> = {
@@ -130,6 +173,7 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
   const [balance, setBalance] = useState(0);
   const [cashBalance, setCashBalance] = useState(0);
   const [bankBalances, setBankBalances] = useState<Record<string, number>>({});
+  const [cashOpening, setCashOpening] = useState(0);
   /** บัญชีที่ตัดเงิน — เงินสดหน้าร้าน หรือบัญชีจากการตั้งค่า */
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [vatType, setVatType] = useState<CashVatType>("NO_VAT");
@@ -144,6 +188,10 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
   /** "" = ทุกบัญชี, CASH_ACCOUNT_ID = เงินสดหน้าร้าน, หรือ id บัญชีจากตั้งค่า */
   const [filterAccountId, setFilterAccountId] = useState("");
   const [page, setPage] = useState(1);
+  const [editing, setEditing] = useState<CashbookEntry | null>(null);
+  const [editDate, setEditDate] = useState("");
+  const [editAmount, setEditAmount] = useState("");
+  const [editAccountId, setEditAccountId] = useState(CASH_ACCOUNT_ID);
   const PAGE_SIZE = 20;
 
   const reload = useCallback(async () => {
@@ -155,6 +203,7 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
     setBalance(data.balance);
     setCashBalance(data.cashBalance);
     setBankBalances(data.bankBalances);
+    setCashOpening(data.cashOpening ?? 0);
     setSelectedAccountId((prev) => prev || data.primary?.id || CASH_ACCOUNT_ID);
   }, []);
 
@@ -180,10 +229,16 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
     return entities;
   }, [entities, expenseCategory]);
 
-  const primaryBank = banks.find((b) => b.isPrimary) || banks[0];
+  const primaryBank = banks.find((b) => b.isPrimary && b.kind !== "CASH")
+    || banks.find((b) => b.kind !== "CASH")
+    || banks[0];
   const primaryBalance = primaryBank
     ? sumBalanceForAccountNumber(banks, bankBalances, primaryBank.accountNumber)
     : 0;
+  const cashPots = banks.filter((b) => b.kind === "CASH");
+  const otherBanks = banks.filter(
+    (b) => b.kind !== "CASH" && b.id !== primaryBank?.id,
+  );
 
   const yearOptions = (() => {
     const years = new Set<number>([filterYear, nowParts().year]);
@@ -196,18 +251,121 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
 
   const monthFrom = Math.min(filterMonthFrom, filterMonthTo);
   const monthTo = Math.max(filterMonthFrom, filterMonthTo);
+  const filterStartYmd = `${filterYear}-${String(monthFrom).padStart(2, "0")}-01`;
 
   const filteredEntries = useMemo(() => {
-    const primaryId = (banks.find((b) => b.isPrimary) || banks[0])?.id;
-    return entries.filter((e) => {
-      const d = String(e.entryDate ?? "");
-      const y = Number(d.slice(0, 4));
-      const m = Number(d.slice(5, 7));
-      if (y !== filterYear) return false;
-      if (!Number.isFinite(m) || m < monthFrom || m > monthTo) return false;
-      return matchesAccountFilter(e, filterAccountId, banks, primaryId);
-    });
+    const primaryId = (banks.find((b) => b.isPrimary && b.kind !== "CASH") ||
+      banks.find((b) => b.kind !== "CASH") ||
+      banks[0])?.id;
+
+    return entries
+      .filter((e) => {
+        if (isAutoCarryNoiseEntry(e)) return false;
+        const d = String(e.entryDate ?? "");
+        const y = Number(d.slice(0, 4));
+        const m = Number(d.slice(5, 7));
+        if (y !== filterYear) return false;
+        if (!Number.isFinite(m) || m < monthFrom || m > monthTo) return false;
+        if (!matchesAccountFilter(e, filterAccountId, banks, primaryId)) return false;
+        return true;
+      })
+      .sort(
+        (a, b) =>
+          a.entryDate.localeCompare(b.entryDate) ||
+          a.createdAt.localeCompare(b.createdAt) ||
+          a.entryNo.localeCompare(b.entryNo),
+      );
   }, [entries, filterYear, monthFrom, monthTo, filterAccountId, banks]);
+
+  /** ยอดยกมาของช่วงที่เลือก (คำนวณ — ไม่ใช่รายการรับ/จ่าย) แบบ Saha ledger */
+  const periodStartingBalance = useMemo(() => {
+    const primaryId = (banks.find((b) => b.isPrimary && b.kind !== "CASH") ||
+      banks.find((b) => b.kind !== "CASH") ||
+      banks[0])?.id;
+    if (filterAccountId) {
+      return balanceForAccountBefore(
+        entries.filter((e) => !isAutoCarryNoiseEntry(e)),
+        banks,
+        filterAccountId,
+        filterStartYmd,
+        cashOpening,
+      );
+    }
+    // ทุกบัญชี: รวมยอดก่อนช่วงของทุกช่องทาง
+    let sum = balanceForAccountBefore(
+      entries.filter((e) => !isAutoCarryNoiseEntry(e)),
+      banks,
+      CASH_ACCOUNT_ID,
+      filterStartYmd,
+      cashOpening,
+    );
+    const seen = new Set<string>();
+    for (const b of banks) {
+      if (b.kind === "CASH") {
+        sum = roundMoney2(
+          sum +
+            balanceForAccountBefore(
+              entries.filter((e) => !isAutoCarryNoiseEntry(e)),
+              banks,
+              b.id,
+              filterStartYmd,
+              cashOpening,
+            ),
+        );
+        continue;
+      }
+      const norm = normalizeAccountNumber(b.accountNumber);
+      if (seen.has(norm)) continue;
+      seen.add(norm);
+      const group = resolveAccountGroupIds(b.id, banks);
+      const canonical =
+        banks.find((x) => group.includes(x.id) && x.isPrimary) ||
+        banks.find((x) => group.includes(x.id)) ||
+        b;
+      sum = roundMoney2(
+        sum +
+          balanceForAccountBefore(
+            entries.filter((e) => !isAutoCarryNoiseEntry(e)),
+            banks,
+            canonical.id,
+            filterStartYmd,
+            cashOpening,
+          ),
+      );
+    }
+    void primaryId;
+    return sum;
+  }, [entries, banks, filterAccountId, filterStartYmd, cashOpening]);
+
+  /** คงเหลือสะสมต่อแถว (เมื่อเลือกบัญชีเดียว) */
+  const runningBalanceById = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!filterAccountId) return map;
+    const asc = [...filteredEntries].sort(
+      (a, b) =>
+        a.entryDate.localeCompare(b.entryDate) ||
+        a.createdAt.localeCompare(b.createdAt) ||
+        a.entryNo.localeCompare(b.entryNo),
+    );
+    let bal = periodStartingBalance;
+    for (const e of asc) {
+      const amt = Number(e.amount) || 0;
+      bal = roundMoney2(bal + (e.direction === "IN" ? amt : -amt));
+      map.set(e.id, bal);
+    }
+    return map;
+  }, [filteredEntries, filterAccountId, periodStartingBalance]);
+
+  /** ยอดสุดท้ายของช่วง = ยอดยกไปเดือนถัดไป (เมื่อเลือกบัญชีเดียว) */
+  const periodClosingBalance = useMemo(() => {
+    if (!filterAccountId) return null;
+    if (filteredEntries.length === 0) return periodStartingBalance;
+    const last = filteredEntries[filteredEntries.length - 1];
+    return runningBalanceById.get(last.id) ?? periodStartingBalance;
+  }, [filterAccountId, filteredEntries, periodStartingBalance, runningBalanceById]);
+
+  /** Cashflow ช่วงที่เลือก = เฉพาะรายการรับ/จ่ายจริง */
+  const periodEntriesForTotals = filteredEntries;
 
   const totalPages = Math.max(1, Math.ceil(filteredEntries.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -243,8 +401,8 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
   }, [entries]);
 
   const monthBalances = useMemo(
-    () => calcBalancesFromEntries(filteredEntries, banks, 0),
-    [filteredEntries, banks],
+    () => calcBalancesFromEntries(periodEntriesForTotals, banks, 0),
+    [periodEntriesForTotals, banks],
   );
 
   const accountFilterOptions = useMemo(() => {
@@ -407,6 +565,36 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
     });
   }
 
+  function openEdit(e: CashbookEntry) {
+    setEditing(e);
+    setEditDate(e.entryDate);
+    setEditAmount(e.amount);
+    setEditAccountId(accountIdFromEntry(e));
+  }
+
+  function saveEdit(ev: React.FormEvent) {
+    ev.preventDefault();
+    if (!editing) return;
+    const pay = resolvePaymentAccount(editAccountId, banks);
+    startTransition(async () => {
+      const res = await updateCashbookEntryClient(editing.id, {
+        entryDate: editDate,
+        amount: editAmount,
+        channel: pay.channel,
+        bankAccountId: pay.bankAccountId,
+      });
+      if (!res.ok) {
+        setMsgOk(false);
+        setMsg(res.message);
+        return;
+      }
+      setMsgOk(true);
+      setMsg(`แก้ไข ${editing.entryNo} แล้ว — ยอดบัญชีอัปเดตแล้ว`);
+      setEditing(null);
+      await reload();
+    });
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -430,14 +618,54 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
           <p className="mt-2 text-2xl font-bold tabular-nums text-slate-900">
             ฿{formatBaht(primaryBalance)}
           </p>
+          <p className="mt-1 text-[11px] text-slate-400">
+            ยอดยกมาตั้งต้นบัญชี + รายการรับ/จ่ายจริง (ไม่นับยอดยกมาปลอม)
+          </p>
+          {otherBanks.length > 0 ? (
+            <ul className="mt-2 space-y-1 border-t border-slate-100 pt-2">
+              {otherBanks.map((b) => (
+                <li
+                  key={b.id}
+                  className="flex items-baseline justify-between gap-2 text-xs text-slate-600"
+                >
+                  <span className="truncate">
+                    {b.bankName} {b.accountNumber}
+                  </span>
+                  <span className="shrink-0 tabular-nums font-medium text-slate-800">
+                    ฿{formatBaht(bankBalances[b.id] ?? 0)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <p className="text-sm text-slate-500">เงินสดหน้าร้าน</p>
           <p className="mt-1 text-xl font-bold tabular-nums">฿{formatBaht(cashBalance)}</p>
+          <p className="mt-1 text-[11px] text-slate-400">
+            ยอดยกมาเงินสดตั้งต้น + รับ/จ่ายช่องทางนี้
+          </p>
+          {cashPots.length > 0 ? (
+            <ul className="mt-2 space-y-1 border-t border-slate-100 pt-2">
+              {cashPots.map((b) => (
+                <li
+                  key={b.id}
+                  className="flex items-baseline justify-between gap-2 text-xs text-slate-600"
+                >
+                  <span className="truncate">เงินสด · {b.accountName}</span>
+                  <span className="shrink-0 tabular-nums font-medium text-slate-800">
+                    ฿{formatBaht(bankBalances[b.id] ?? 0)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <p className="text-sm text-slate-500">Cashflow ({filterPeriodLabel})</p>
-          <p className="mt-0.5 text-[11px] text-slate-400">รวมทุกช่องทาง · เงินสด + บัญชีธนาคาร</p>
+          <p className="mt-0.5 text-[11px] text-slate-400">
+            รับ/จ่ายจริงในช่วงที่เลือก · ยอดยกมาแถวแรกในตารางไม่นับซ้ำ
+          </p>
           <p className="mt-1 text-xl font-bold tabular-nums text-emerald-700">
             รับ ฿{formatBaht(monthBalances.totalIn)}
           </p>
@@ -731,6 +959,70 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
         </form>
       )}
 
+      {editing ? (
+        <form
+          onSubmit={saveEdit}
+          className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/50 p-4 shadow-sm"
+        >
+          <p className="text-sm font-medium text-slate-800">
+            แก้ไข {editing.entryNo}
+            <span className="ml-2 font-normal text-slate-500">{editing.description}</span>
+          </p>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="text-sm">
+              <span className="mb-1 block text-slate-600">วันที่</span>
+              <input
+                type="date"
+                className={inp}
+                required
+                value={editDate}
+                onChange={(e) => setEditDate(e.target.value)}
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-slate-600">จำนวนเงิน</span>
+              <input
+                className={inp}
+                required
+                inputMode="decimal"
+                value={editAmount}
+                onChange={(e) => setEditAmount(e.target.value)}
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-slate-600">บัญชีที่ตัด</span>
+              <select
+                className={inp}
+                value={editAccountId}
+                onChange={(e) => setEditAccountId(e.target.value)}
+              >
+                {accountPickerOptions.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={pending}
+              className="rounded-md bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-50"
+            >
+              บันทึกการแก้ไข
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditing(null)}
+              className="rounded-md border border-slate-300 px-4 py-2 text-sm"
+            >
+              ยกเลิก
+            </button>
+          </div>
+        </form>
+      ) : null}
+
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
         <table className="min-w-full text-sm">
           <thead className="border-b bg-slate-50 text-left text-slate-600">
@@ -743,13 +1035,31 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
               <th className="px-3 py-2">รายละเอียด</th>
               <th className="px-3 py-2 text-right">รับเข้า</th>
               <th className="px-3 py-2 text-right">จ่ายออก</th>
+              <th className="px-3 py-2 text-right">คงเหลือสะสม</th>
               <th className="px-3 py-2" />
             </tr>
           </thead>
           <tbody>
+            {filterAccountId && safePage === 1 ? (
+              <tr className="border-b border-slate-100 bg-slate-50/80 italic">
+                <td colSpan={8} className="px-3 py-2 text-slate-700">
+                  ยอดยกมา
+                  <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold not-italic uppercase tracking-wide text-sky-800">
+                    auto
+                  </span>
+                  <span className="ml-2 text-[11px] not-italic text-slate-400">
+                    ก่อนรายการแรกในช่วงนี้ — ไม่ใช่รายการรับ/จ่าย
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-900">
+                  ฿{formatBaht(periodStartingBalance)}
+                </td>
+                <td />
+              </tr>
+            ) : null}
             {filteredEntries.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-3 py-8 text-center text-slate-500">
+                <td colSpan={10} className="px-3 py-8 text-center text-slate-500">
                   {entries.length === 0 ? (
                     "ยังไม่มีรายการ — ออกใบเสร็จ/ใบสำคัญจ่าย หรือบันทึกรายการด่วน"
                   ) : (
@@ -789,12 +1099,15 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
                   : bank?.kind === "CASH"
                     ? `เงินสด · ${bank.accountName}`
                     : "เงินสดหน้าร้าน";
+              const runBal = runningBalanceById.get(e.id);
               return (
                 <tr key={e.id} className="border-b border-slate-100">
                   <td className="px-3 py-2 font-mono text-xs">{e.entryNo}</td>
                   <td className="px-3 py-2 whitespace-nowrap">{formatDateThBE(e.entryDate)}</td>
                   <td className="px-3 py-2 text-xs">{channelLabel}</td>
-                  <td className="px-3 py-2 text-xs">{TYPE_LABELS[e.entryType] ?? e.entryType}</td>
+                  <td className="px-3 py-2 text-xs">
+                    {TYPE_LABELS[e.entryType] ?? e.entryType}
+                  </td>
                   <td className="px-3 py-2 text-xs">
                     {e.vatType ? VAT_LABELS[e.vatType] ?? e.vatType : "—"}
                   </td>
@@ -809,6 +1122,9 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums text-red-600">
                     {e.direction === "OUT" ? formatBaht(amt) : ""}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums font-medium text-slate-800">
+                    {filterAccountId && runBal != null ? `฿${formatBaht(runBal)}` : "—"}
                   </td>
                   <td className="px-3 py-2 text-right">
                     {(() => {
@@ -829,6 +1145,28 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
                               onClick={() => printDoc(pvId)}
                             />
                           )}
+                          {isAdmin && cashbookEditableHere(e) ? (
+                            <button
+                              type="button"
+                              className="text-blue-700 hover:underline disabled:opacity-50"
+                              disabled={pending}
+                              onClick={() => openEdit(e)}
+                            >
+                              แก้ไข
+                            </button>
+                          ) : isAdmin &&
+                            (e.documentId ||
+                              e.vehicleId ||
+                              e.entryType === "DOCUMENT_AUTO" ||
+                              e.entryType === "VEHICLE_PURCHASE" ||
+                              e.entryType === "VEHICLE_SALE") ? (
+                            <span
+                              className="text-[11px] text-slate-400"
+                              title="รายการนี้คำนวณจากเอกสารหรือรถ — แก้ที่ยอดต้นทาง"
+                            >
+                              แก้ที่เอกสาร
+                            </span>
+                          ) : null}
                           {isAdmin && (
                             <button
                               type="button"
@@ -859,6 +1197,23 @@ export function CashbookClient({ userName = "" }: { userName?: string }) {
                 </tr>
               );
             })}
+            {filterAccountId && safePage === totalPages ? (
+              <tr className="border-t-2 border-slate-300 bg-emerald-50/60 font-semibold">
+                <td colSpan={8} className="px-3 py-2 text-slate-800">
+                  คงเหลือยกไป
+                  <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-800">
+                    auto
+                  </span>
+                  <span className="ml-2 text-[11px] font-normal text-slate-500">
+                    ยอดนี้คือยอดยกมาของเดือนถัดไป
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums text-slate-900">
+                  ฿{formatBaht(periodClosingBalance ?? 0)}
+                </td>
+                <td />
+              </tr>
+            ) : null}
           </tbody>
         </table>
         {filteredEntries.length > PAGE_SIZE && (

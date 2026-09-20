@@ -15,6 +15,7 @@ const kindLabel: Record<DocumentKind, string> = {
   TAX_INVOICE: "ใบกำกับภาษี",
   RECEIPT: "ใบเสร็จรับเงิน",
   PURCHASE_ORDER: "ใบสั่งจ้าง",
+  QUOTATION: "ใบเสนอราคา",
   WITHHOLDING_TAX: "หัก ณ ที่จ่าย",
   PAYMENT_VOUCHER: "ใบสำคัญจ่าย",
 };

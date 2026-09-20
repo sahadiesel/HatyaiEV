@@ -29,6 +29,11 @@ const docNav = [
     newHref: "/contracts/subcontract-agreements/new",
     label: "9. สัญญาว่าจ้าง",
   },
+  {
+    href: "/documents/quotation",
+    newHref: "/documents/quotation/new",
+    label: "10. ใบเสนอราคา",
+  },
 ] as const;
 
 export function DocumentsSubnav() {

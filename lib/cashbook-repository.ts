@@ -39,6 +39,7 @@ function parseEntry(id: string, d: Record<string, unknown>): CashbookEntry {
     vatType: (d.vatType as CashVatType) || null,
     customerVatAmount: d.customerVatAmount != null ? String(d.customerVatAmount) : null,
     remittanceVatAmount: d.remittanceVatAmount != null ? String(d.remittanceVatAmount) : null,
+    isSystemAuto: Boolean(d.isSystemAuto),
     createdByName: String(d.createdByName ?? ""),
     createdAt: String(d.createdAt ?? ""),
   };
@@ -87,20 +88,29 @@ export async function setOpeningBalance(amount: string) {
 export async function listCashbookEntries(limit = 300): Promise<CashbookEntry[]> {
   const firestore = db();
   if (!firestore) return [];
+  const applyLimit = (rows: CashbookEntry[]) => {
+    if (!limit || limit <= 0) return rows;
+    return rows.slice(0, limit);
+  };
   try {
-    const snap = await firestore
-      .collection(firestoreCollections.cashbookEntries)
-      .orderBy("entryDate", "desc")
-      .limit(limit)
-      .get();
+    const col = firestore.collection(firestoreCollections.cashbookEntries);
+    const snap =
+      limit > 0
+        ? await col.orderBy("entryDate", "desc").limit(limit).get()
+        : await col.orderBy("entryDate", "desc").get();
     return snap.docs.map((doc) => parseEntry(doc.id, doc.data() as Record<string, unknown>));
   } catch {
     try {
       const snap = await firestore.collection(firestoreCollections.cashbookEntries).get();
-      return snap.docs
-        .map((doc) => parseEntry(doc.id, doc.data() as Record<string, unknown>))
-        .sort((a, b) => b.entryDate.localeCompare(a.entryDate) || b.createdAt.localeCompare(a.createdAt))
-        .slice(0, limit);
+      return applyLimit(
+        snap.docs
+          .map((doc) => parseEntry(doc.id, doc.data() as Record<string, unknown>))
+          .sort(
+            (a, b) =>
+              b.entryDate.localeCompare(a.entryDate) ||
+              b.createdAt.localeCompare(a.createdAt),
+          ),
+      );
     } catch (e) {
       console.error("[listCashbookEntries]", e);
       return [];
@@ -246,7 +256,7 @@ export async function calcCashflowBalance(): Promise<{
   bankBalances: Record<string, number>;
   entries: CashbookEntry[];
 }> {
-  const [settings, entries] = await Promise.all([getCashSettings(), listCashbookEntries()]);
+  const [settings, entries] = await Promise.all([getCashSettings(), listCashbookEntries(0)]);
   const openingBalance = parseAmount(settings.openingBalance);
   const cashOpening = parseAmount(settings.cashOpeningBalance || settings.openingBalance);
   const overall = sumChannel(entries, openingBalance, () => true);

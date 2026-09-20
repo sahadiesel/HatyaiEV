@@ -8,7 +8,7 @@ export default function ContractsLayout({ children }: { children: React.ReactNod
         <h1 className="text-2xl font-bold text-slate-900">ศูนย์เอกสารทางกฎหมายและบัญชี</h1>
         <p className="mt-1 text-sm text-slate-600">
           ใบแจ้งหนี้ · ใบกำกับภาษี · ใบเสร็จ · ใบสำคัญจ่าย · หัก ณ ที่จ่าย · สัญญาซื้อ · สัญญาขาย · สัญญารับจ้าง ·
-          สัญญาว่าจ้าง
+          สัญญาว่าจ้าง · ใบเสนอราคา
         </p>
       </div>
       <DocumentsSubnav />

@@ -9,6 +9,7 @@ import { calcWithholdingTotals, parseAmount } from "@/lib/documents/calc";
 import { printDocumentClient } from "@/lib/documents-client";
 import type {
   BankAccountRecord,
+  CashbookEntry,
   EntityRecord,
   VehicleCostCategory,
   VehiclePurchasePayment,
@@ -17,6 +18,7 @@ import type {
 } from "@/lib/domain-types";
 import { entityHasRoleGroup } from "@/lib/entity-roles";
 import { formatDateThBE } from "@/lib/format-date-th";
+import { listCashbookEntriesClient } from "@/lib/cashbook-client";
 import {
   addVehicleCostLineClient,
   addVehiclePurchasePaymentClient,
@@ -79,6 +81,7 @@ export function VehicleDetailClient({
   const [payAmount, setPayAmount] = useState("");
   const [paySaving, setPaySaving] = useState(false);
   const [banks, setBanks] = useState<BankAccountRecord[]>([]);
+  const [vehicleCashEntries, setVehicleCashEntries] = useState<CashbookEntry[]>([]);
   const [docPack, setDocPack] = useState<VehicleDocumentPack | null>(null);
   const [editingPayId, setEditingPayId] = useState<string | null>(null);
   const [editPayDate, setEditPayDate] = useState("");
@@ -115,6 +118,17 @@ export function VehicleDetailClient({
       // ไม่เลือกบัญชีอัตโนมัติ — ให้ผู้ใช้เลือกเองทุกครั้ง
     });
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listCashbookEntriesClient(800).then((rows) => {
+      if (cancelled) return;
+      setVehicleCashEntries(rows.filter((e) => e.vehicleId === vehicle.id));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [vehicle.id, vehicle.purchasePayments]);
 
   useEffect(() => {
     setPayHasVat(vehicle.purchaseType === "COMPANY_VAT_7");
@@ -286,17 +300,69 @@ export function VehicleDetailClient({
     return entities;
   }, [entities, costCategory]);
 
-  function accountSelectValue(p: VehiclePurchasePayment): string {
-    if (p.bankAccountId) return p.bankAccountId;
-    if (p.channel === "CASH") return CASH_ACCOUNT_ID;
-    return "";
+  /** ดึงบัญชีที่เคยตัดจริงจากงวดจ่าย หรือจากสมุดเงินสดที่ผูกไว้ */
+  function resolvePaymentAccountInfo(p: VehiclePurchasePayment): {
+    selectId: string;
+    channel: string | null;
+    bankAccountId: string | null;
+    known: boolean;
+  } {
+    if (p.bankAccountId || p.channel === "CASH" || p.channel === "BANK") {
+      const selectId = p.bankAccountId
+        ? p.bankAccountId
+        : p.channel === "CASH"
+          ? CASH_ACCOUNT_ID
+          : "";
+      return {
+        selectId,
+        channel: p.channel ?? (p.bankAccountId ? "BANK" : null),
+        bankAccountId: p.bankAccountId ?? null,
+        known: Boolean(selectId || p.channel === "CASH"),
+      };
+    }
+
+    const linked = p.cashbookEntryId
+      ? vehicleCashEntries.find((e) => e.id === p.cashbookEntryId)
+      : null;
+    const amt = Number(String(p.amount).replace(/,/g, "")) || 0;
+    const matched =
+      linked ||
+      vehicleCashEntries.find(
+        (e) =>
+          e.entryType === "VEHICLE_PURCHASE" &&
+          e.direction === "OUT" &&
+          Math.abs((Number(e.amount) || 0) - amt) < 0.02 &&
+          e.entryDate === p.date,
+      ) ||
+      vehicleCashEntries.find(
+        (e) =>
+          e.entryType === "VEHICLE_PURCHASE" &&
+          e.direction === "OUT" &&
+          Math.abs((Number(e.amount) || 0) - amt) < 0.02,
+      );
+
+    if (!matched) {
+      return { selectId: "", channel: null, bankAccountId: null, known: false };
+    }
+
+    const selectId =
+      matched.channel === "CASH"
+        ? matched.bankAccountId || CASH_ACCOUNT_ID
+        : matched.bankAccountId || "";
+    return {
+      selectId,
+      channel: matched.channel,
+      bankAccountId: matched.bankAccountId,
+      known: Boolean(selectId || matched.channel === "CASH"),
+    };
   }
 
   function startEditPayment(p: VehiclePurchasePayment) {
+    const info = resolvePaymentAccountInfo(p);
     setEditingPayId(p.id);
     setEditPayDate(p.date || "");
     setEditPayAmount(p.amount || "");
-    setEditPayAccountId(accountSelectValue(p));
+    setEditPayAccountId(info.selectId);
     setEditPayBillNo(p.billNo || "");
     setEditPayReceiptNo(p.receiptNo || "");
   }
@@ -327,7 +393,10 @@ export function VehicleDetailClient({
       }
       setVehicle(res.vehicle);
       setEditingPayId(null);
-      flash(true, "อัปเดตรายการจ่ายค่าซื้อแล้ว");
+      void listCashbookEntriesClient(800).then((rows) => {
+        setVehicleCashEntries(rows.filter((e) => e.vehicleId === vehicle.id));
+      });
+      flash(true, "อัปเดตรายการจ่ายแล้ว · ซิงก์สมุดเงินสด/บัญชีเรียบร้อย");
     });
   }
 
@@ -1003,6 +1072,7 @@ export function VehicleDetailClient({
               <tbody>
                 {vehicle.purchasePayments.map((p) => {
                   const editing = editingPayId === p.id;
+                  const acct = resolvePaymentAccountInfo(p);
                   return (
                     <tr key={p.id} className="border-b border-slate-100 align-top">
                       <td className="px-3 py-2">
@@ -1039,20 +1109,24 @@ export function VehicleDetailClient({
                             value={editPayAccountId}
                             onChange={(e) => setEditPayAccountId(e.target.value)}
                           >
-                            <option value="" className="italic text-slate-400">
-                              - กรุณาเลือกบัญชี -
-                            </option>
+                            {!acct.known && (
+                              <option value="" className="italic text-slate-400">
+                                - กรุณาเลือกบัญชี -
+                              </option>
+                            )}
                             {payAccountOptions.map((o) => (
                               <option key={o.id} value={o.id}>
                                 {o.label}
                               </option>
                             ))}
                           </select>
-                        ) : (
+                        ) : acct.known ? (
                           formatPaymentAccountLabel(
-                            { channel: p.channel, bankAccountId: p.bankAccountId },
+                            { channel: acct.channel, bankAccountId: acct.bankAccountId },
                             banks,
                           )
+                        ) : (
+                          <span className="italic text-slate-400">ยังไม่ระบุบัญชี</span>
                         )}
                       </td>
                       <td className="px-3 py-2 text-xs text-slate-600">

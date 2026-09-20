@@ -21,10 +21,12 @@ import type {
 import { parseAmount, roundMoney2 } from "@/lib/documents/calc";
 import { toYmdLocal } from "@/lib/format-date-th";
 import { getFirestoreDb } from "@/lib/firebase";
-import { firestoreCollections } from "@/lib/firestore-collections";
+import { firestoreCollections, cashSettingsDocId } from "@/lib/firestore-collections";
 import {
+  CASH_ACCOUNT_ID,
   ensurePrimaryBankAccount,
   listBankAccountsClient,
+  normalizeAccountNumber,
 } from "@/lib/bank-accounts-client";
 
 function newId(): string {
@@ -103,9 +105,137 @@ export function parseCashbookEntryClient(id: string, d: Record<string, unknown>)
     vatType: (d.vatType as CashVatType) || null,
     customerVatAmount: d.customerVatAmount != null ? String(d.customerVatAmount) : null,
     remittanceVatAmount: d.remittanceVatAmount != null ? String(d.remittanceVatAmount) : null,
+    isSystemAuto: Boolean(d.isSystemAuto),
     createdByName: String(d.createdByName ?? ""),
     createdAt: String(d.createdAt ?? ""),
   };
+}
+
+/** รายการยอดยกมา (ประเภท หรือคำอธิบายแบบเดิม) */
+export function isBalanceCarryEntry(e: Pick<CashbookEntry, "entryType" | "description">): boolean {
+  if (e.entryType === "BALANCE_CARRY") return true;
+  return String(e.description ?? "").trim().startsWith("ยอดยกมา");
+}
+
+/** รายการยอดยกมาที่ระบบสร้างผิด — ไม่นับเป็นรับ/จ่ายจริง */
+export function isAutoCarryNoiseEntry(e: CashbookEntry): boolean {
+  if (e.entryType === "BALANCE_CARRY") return true;
+  if (e.isSystemAuto) return true;
+  if (e.createdByName === "ระบบ" && isBalanceCarryEntry(e)) return true;
+  if (e.entryNo === "AUTO" || e.id.startsWith("auto-carry-")) return true;
+  return false;
+}
+
+export function isSystemAutoCarryEntry(e: CashbookEntry): boolean {
+  return isAutoCarryNoiseEntry(e);
+}
+
+/** กลุ่ม id บัญชีที่ถือว่าเป็นบัญชีเดียวกัน (เลขบัญชีซ้ำ) */
+export function resolveAccountGroupIds(
+  accountKey: string,
+  banks: BankAccountRecord[],
+): string[] {
+  if (accountKey === CASH_ACCOUNT_ID) return [CASH_ACCOUNT_ID];
+  const bank = banks.find((b) => b.id === accountKey);
+  if (!bank) return [accountKey];
+  if (bank.kind === "CASH") return [accountKey];
+  const norm = normalizeAccountNumber(bank.accountNumber);
+  const ids = banks
+    .filter((b) => b.kind !== "CASH" && normalizeAccountNumber(b.accountNumber) === norm)
+    .map((b) => b.id);
+  return ids.length > 0 ? ids : [accountKey];
+}
+
+/** คีย์บัญชีสำหรับจัดกลุ่มยอด (เงินสดหน้าร้าน = CASH_ACCOUNT_ID) */
+export function cashbookAccountKey(
+  e: Pick<CashbookEntry, "channel" | "bankAccountId">,
+  banks: BankAccountRecord[],
+  primaryId?: string,
+): string {
+  if (e.channel === "BANK") {
+    return e.bankAccountId || primaryId || "__UNKNOWN_BANK__";
+  }
+  const pot =
+    e.bankAccountId && banks.find((b) => b.id === e.bankAccountId && b.kind === "CASH");
+  if (pot) return pot.id;
+  return CASH_ACCOUNT_ID;
+}
+
+function entryMatchesAccountKey(
+  e: CashbookEntry,
+  accountKey: string,
+  banks: BankAccountRecord[],
+  primaryId?: string,
+): boolean {
+  const key = cashbookAccountKey(e, banks, primaryId);
+  if (key === accountKey) return true;
+  const group = new Set(resolveAccountGroupIds(accountKey, banks));
+  if (group.has(key)) return true;
+  // รายการ BANK ที่ไม่มี bankAccountId → ถือว่าเป็นบัญชีหลัก
+  if (
+    e.channel === "BANK" &&
+    !e.bankAccountId &&
+    primaryId &&
+    group.has(primaryId)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** ยอดคงเหลือของบัญชี ณ ก่อนวันที่ beforeYmd (ไม่รวมวันนั้น) */
+export function balanceForAccountBefore(
+  entries: CashbookEntry[],
+  banks: BankAccountRecord[],
+  accountKey: string,
+  beforeYmd: string,
+  cashOpening = 0,
+): number {
+  const primary =
+    banks.find((b) => b.kind !== "CASH" && b.isPrimary) ||
+    banks.find((b) => b.kind !== "CASH") ||
+    banks[0];
+  const relevant = entries.filter(
+    (e) =>
+      e.entryDate < beforeYmd &&
+      entryMatchesAccountKey(e, accountKey, banks, primary?.id),
+  );
+  return roundMoney2(
+    holdingsForAccountEntries(relevant, banks, accountKey, cashOpening),
+  );
+}
+
+/** ยอดถือครองจากรายการของบัญชีเดียว — แบบ Saha: ยอดยกมาตั้งต้น + รับ − จ่าย */
+function holdingsForAccountEntries(
+  entries: CashbookEntry[],
+  banks: BankAccountRecord[],
+  accountKey: string,
+  cashOpening: number,
+): number {
+  const real = entries.filter((e) => !isAutoCarryNoiseEntry(e));
+  const sorted = [...real].sort(
+    (a, b) =>
+      a.entryDate.localeCompare(b.entryDate) ||
+      a.createdAt.localeCompare(b.createdAt) ||
+      a.entryNo.localeCompare(b.entryNo),
+  );
+
+  const groupIds = new Set(resolveAccountGroupIds(accountKey, banks));
+  let bal =
+    accountKey === CASH_ACCOUNT_ID
+      ? cashOpening
+      : parseAmount(
+          (
+            banks.find((b) => groupIds.has(b.id) && b.isPrimary) ||
+            banks.find((b) => groupIds.has(b.id))
+          )?.openingBalance ?? "0",
+        );
+
+  for (const e of sorted) {
+    const amt = parseAmount(e.amount);
+    bal += e.direction === "IN" ? amt : -amt;
+  }
+  return bal;
 }
 
 export async function listCashbookEntriesClient(limit = 300): Promise<CashbookEntry[]> {
@@ -113,13 +243,36 @@ export async function listCashbookEntriesClient(limit = 300): Promise<CashbookEn
   if (!db) return [];
   try {
     const snap = await getDocs(collection(db, firestoreCollections.cashbookEntries));
-    return snap.docs
+    const rows = snap.docs
       .map((d) => parseCashbookEntryClient(d.id, d.data() as Record<string, unknown>))
-      .sort((a, b) => b.entryDate.localeCompare(a.entryDate) || b.createdAt.localeCompare(a.createdAt))
-      .slice(0, limit);
+      .sort((a, b) => b.entryDate.localeCompare(a.entryDate) || b.createdAt.localeCompare(a.createdAt));
+    // limit <= 0 = โหลดทั้งหมด (ใช้คำนวณยอดคงเหลือ)
+    if (!limit || limit <= 0) return rows;
+    return rows.slice(0, limit);
   } catch (e) {
     console.error("[listCashbookEntriesClient]", e);
     return [];
+  }
+}
+
+/** ตั้งค่ายอดยกมาเงินสดหน้าร้าน */
+export async function getCashSettingsClient(): Promise<{
+  openingBalance: string;
+  cashOpeningBalance: string;
+}> {
+  const db = getFirestoreDb();
+  if (!db) return { openingBalance: "0", cashOpeningBalance: "0" };
+  try {
+    const snap = await getDoc(doc(db, firestoreCollections.cashSettings, cashSettingsDocId));
+    if (!snap.exists()) return { openingBalance: "0", cashOpeningBalance: "0" };
+    const d = snap.data() as Record<string, unknown>;
+    return {
+      openingBalance: String(d.openingBalance ?? "0"),
+      cashOpeningBalance: String(d.cashOpeningBalance ?? d.openingBalance ?? "0"),
+    };
+  } catch (e) {
+    console.error("[getCashSettingsClient]", e);
+    return { openingBalance: "0", cashOpeningBalance: "0" };
   }
 }
 
@@ -146,6 +299,7 @@ export type PostCashbookClientInput = {
   paymentVoucherDocumentNumber?: string | null;
   billNo?: string | null;
   createdByName?: string;
+  isSystemAuto?: boolean;
 };
 
 export async function postCashbookEntryClient(
@@ -214,6 +368,7 @@ export async function postCashbookEntryClient(
         input.remittanceVatAmount != null && input.remittanceVatAmount !== ""
           ? roundMoney2(parseAmount(input.remittanceVatAmount)).toFixed(2)
           : null,
+      isSystemAuto: Boolean(input.isSystemAuto),
       createdByName: input.createdByName ?? "",
       createdAt: new Date().toISOString(),
     };
@@ -357,12 +512,14 @@ export function calcBalancesFromEntries(
   banks: BankAccountRecord[],
   cashOpening = 0,
 ) {
+  const real = entries.filter((e) => !isAutoCarryNoiseEntry(e));
   let totalIn = 0;
   let totalOut = 0;
-  let cashIn = 0;
-  let cashOut = 0;
-  const bankNet: Record<string, number> = {};
-  for (const b of banks) bankNet[b.id] = parseAmount(b.openingBalance);
+  for (const e of real) {
+    const amt = parseAmount(e.amount);
+    if (e.direction === "IN") totalIn += amt;
+    else totalOut += amt;
+  }
 
   const banksOnly = banks.filter((b) => b.kind !== "CASH");
   const primary =
@@ -370,50 +527,95 @@ export function calcBalancesFromEntries(
     banksOnly.find((b) => b.accountNumber.includes("215")) ||
     banksOnly[0];
 
-  for (const e of entries) {
-    const amt = parseAmount(e.amount);
-    if (e.direction === "IN") totalIn += amt;
-    else totalOut += amt;
-
-    if (e.channel === "BANK") {
-      // ตัดตามบัญชีที่ระบุเท่านั้น — ห้ามย้ายรายการไปบัญชีหลักเมื่อ id ไม่รู้จัก
-      // (พฤติกรรมเก่าย้ายไปบัญชีหลัก ทำให้ดูเหมือนตัดคนละบัญชี)
-      const bankId = e.bankAccountId;
-      if (bankId) {
-        if (!(bankId in bankNet)) bankNet[bankId] = 0;
-        bankNet[bankId] += e.direction === "IN" ? amt : -amt;
-      } else if (primary?.id) {
-        if (!(primary.id in bankNet)) bankNet[primary.id] = 0;
-        bankNet[primary.id] += e.direction === "IN" ? amt : -amt;
-      } else if (e.direction === "IN") {
-        cashIn += amt;
-      } else {
-        cashOut += amt;
-      }
-    } else {
-      // เงินสดหน้าร้าน หรือกระเป๋าเงินสดที่มีชื่อ (kind=CASH + bankAccountId)
-      const cashPotId = e.bankAccountId;
-      const cashPot =
-        cashPotId && banks.find((b) => b.id === cashPotId && b.kind === "CASH");
-      if (cashPot && cashPotId) {
-        if (!(cashPotId in bankNet)) bankNet[cashPotId] = 0;
-        bankNet[cashPotId] += e.direction === "IN" ? amt : -amt;
-      } else if (e.direction === "IN") {
-        cashIn += amt;
-      } else {
-        cashOut += amt;
-      }
+  const canonicalKeys: string[] = [CASH_ACCOUNT_ID];
+  const seenNorm = new Set<string>();
+  for (const b of banks) {
+    if (b.kind === "CASH") {
+      canonicalKeys.push(b.id);
+      continue;
     }
+    const norm = normalizeAccountNumber(b.accountNumber);
+    if (seenNorm.has(norm)) continue;
+    seenNorm.add(norm);
+    const group = banks.filter(
+      (x) => x.kind !== "CASH" && normalizeAccountNumber(x.accountNumber) === norm,
+    );
+    const canonical = group.find((x) => x.isPrimary) || group[0] || b;
+    canonicalKeys.push(canonical.id);
   }
 
-  for (const k of Object.keys(bankNet)) bankNet[k] = roundMoney2(bankNet[k]);
+  const bankNet: Record<string, number> = {};
+  for (const b of banks) bankNet[b.id] = parseAmount(b.openingBalance);
+
+  let cashBalance = roundMoney2(cashOpening);
+  for (const key of canonicalKeys) {
+    const list = real.filter((e) =>
+      entryMatchesAccountKey(e, key, banks, primary?.id),
+    );
+    const bal = roundMoney2(
+      holdingsForAccountEntries(list, banks, key, cashOpening),
+    );
+    if (key === CASH_ACCOUNT_ID) {
+      cashBalance = bal;
+      continue;
+    }
+    const group = resolveAccountGroupIds(key, banks);
+    for (const id of group) bankNet[id] = 0;
+    bankNet[key] = bal;
+  }
+
+  const banksTotal = roundMoney2(
+    Object.values(bankNet).reduce((s, v) => s + v, 0),
+  );
   return {
     totalIn: roundMoney2(totalIn),
     totalOut: roundMoney2(totalOut),
-    balance: roundMoney2(cashOpening + totalIn - totalOut),
-    cashBalance: roundMoney2(cashOpening + cashIn - cashOut),
+    balance: roundMoney2(totalIn - totalOut),
+    cashBalance,
+    holdingsTotal: roundMoney2(cashBalance + banksTotal),
     bankBalances: bankNet,
   };
+}
+
+/**
+ * ลบรายการยอดยกมาที่ระบบเคยสร้างผิด (AUTO / BALANCE_CARRY)
+ * — ตามแบบ Saha_new: ยอดยกมาเป็นยอดคำนวณ ไม่ใช่รายการรับ/จ่ายในสมุด
+ */
+export async function cleanupAutoBalanceCarriesClient(
+  entries: CashbookEntry[],
+): Promise<{ entries: CashbookEntry[]; removed: number }> {
+  const isAutoCarry = (e: CashbookEntry) =>
+    e.entryType === "BALANCE_CARRY" ||
+    Boolean(e.isSystemAuto) ||
+    e.createdByName === "ระบบ" ||
+    e.entryNo === "AUTO" ||
+    e.id.startsWith("auto-carry-") ||
+    (isBalanceCarryEntry(e) &&
+      (Boolean(e.isSystemAuto) || e.createdByName === "ระบบ" || e.entryNo === "AUTO"));
+
+  let removed = 0;
+  const keep: CashbookEntry[] = [];
+  for (const e of entries) {
+    if (!isAutoCarry(e)) {
+      keep.push(e);
+      continue;
+    }
+    if (e.id.startsWith("auto-carry-")) continue;
+    const del = await deleteCashbookEntryClient(e.id);
+    if (del.ok) removed += 1;
+  }
+  return { entries: keep, removed };
+}
+
+/** @deprecated ใช้ cleanupAutoBalanceCarriesClient — ไม่สร้างยอดยกมาเป็นรายการรับ/จ่ายอีก */
+export async function ensureMonthlyBalanceCarriesClient(
+  entries: CashbookEntry[],
+  _banks: BankAccountRecord[],
+  _cashOpening = 0,
+  _now = new Date(),
+): Promise<{ entries: CashbookEntry[]; created: number; updated: number; removed: number }> {
+  const { entries: next, removed } = await cleanupAutoBalanceCarriesClient(entries);
+  return { entries: next, created: 0, updated: 0, removed };
 }
 
 /**
@@ -509,12 +711,17 @@ export async function backfillCashbookWhtLinksClient(
 }
 
 export async function loadCashbookDashboard() {
-  const [rawEntries, primary] = await Promise.all([
-    listCashbookEntriesClient(),
+  const [rawEntries, primary, settings] = await Promise.all([
+    listCashbookEntriesClient(0),
     ensurePrimaryBankAccount(),
+    getCashSettingsClient(),
   ]);
-  const entries = await backfillCashbookWhtLinksClient(rawEntries);
+  const backfilled = await backfillCashbookWhtLinksClient(rawEntries);
   const banks = await listBankAccountsClient();
-  const balances = calcBalancesFromEntries(entries, banks, 0);
-  return { entries, banks, primary, ...balances };
+  const cashOpening = parseAmount(settings.cashOpeningBalance || settings.openingBalance);
+  // ลบยอดยกมา AUTO ที่เคยสร้างผิด — ไม่สร้างใหม่ (ยอดยกมาเป็นยอดคำนวณแบบ Saha)
+  const cleaned = await cleanupAutoBalanceCarriesClient(backfilled);
+  const entries = cleaned.entries;
+  const balances = calcBalancesFromEntries(entries, banks, cashOpening);
+  return { entries, banks, primary, cashOpening, ...balances };
 }

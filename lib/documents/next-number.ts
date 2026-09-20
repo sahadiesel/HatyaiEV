@@ -15,6 +15,7 @@ export async function nextDocumentNumber(kind: DocumentKind, now = new Date()): 
     RECEIPT: brand.docPrefixReceipt,
     WITHHOLDING_TAX: brand.docPrefixWht,
     PURCHASE_ORDER: "PO",
+    QUOTATION: "QT",
     PAYMENT_VOUCHER: "PV",
   };
   const prefix = (prefixMap[kind] || "DOC").trim();

@@ -173,6 +173,7 @@ async function nextDocumentNumberClient(kind: DocumentKind, now: Date): Promise<
     RECEIPT: brand.docPrefixReceipt,
     WITHHOLDING_TAX: brand.docPrefixWht,
     PURCHASE_ORDER: "PO",
+    QUOTATION: "QT",
     PAYMENT_VOUCHER: "PV",
   };
   const prefix = (prefixMap[kind] || "DOC").trim();
@@ -285,7 +286,7 @@ export async function saveCommercialDocumentClient(
   if (!db) return { ok: false, message: "ยังไม่ได้ตั้งค่า Firebase (NEXT_PUBLIC_FIREBASE_*)" };
 
   const kind = input.kind;
-  if (!["INVOICE", "TAX_INVOICE", "RECEIPT"].includes(kind)) {
+  if (!["INVOICE", "TAX_INVOICE", "RECEIPT", "QUOTATION"].includes(kind)) {
     return { ok: false, message: "ประเภทเอกสารไม่ถูกต้อง" };
   }
 
@@ -375,7 +376,7 @@ export async function saveCommercialDocumentClient(
       updatedAt: serverTimestamp(),
     });
 
-    if (number) {
+    if (number && kind !== "QUOTATION") {
       const vatType =
         meta.vatScheme === "MARGIN" ||
         meta.vatScheme === "FULL_SALE" ||

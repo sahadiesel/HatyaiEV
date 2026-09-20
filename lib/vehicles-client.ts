@@ -559,7 +559,7 @@ export async function addVehiclePurchasePaymentClient(
   }
 }
 
-/** แก้ไขงวดจ่ายค่าซื้อรถ + ซิงก์สมุดเงินสดที่ผูกไว้ */
+/** แก้ไขงวดจ่ายค่าซื้อรถ + ซิงก์สมุดเงินสดที่ผูกไว้ (หา/สร้างรายการถ้ายังไม่ผูก) */
 export async function updateVehiclePurchasePaymentClient(
   vehicleId: string,
   paymentId: string,
@@ -607,6 +607,80 @@ export async function updateVehiclePurchasePaymentClient(
     const date = input.date || prev.date;
     const billNo = (input.billNo ?? "").trim() || null;
     const receiptNo = (input.receiptNo ?? "").trim() || null;
+    const vehicleLabel =
+      `${existing.code || ""} ${existing.brand} ${existing.model} ${existing.licensePlate || ""}`.trim();
+    const docHints = [
+      billNo ? `บิล ${billNo}` : "",
+      receiptNo ? `ใบเสร็จ ${receiptNo}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    const description = `จ่ายค่าซื้อรถ: ${vehicleLabel}${docHints ? ` ${docHints}` : ""}`.trim();
+
+    let cashbookEntryId = prev.cashbookEntryId || null;
+    const cashEntries = await listCashbookEntriesClient(800);
+    const linkedElsewhere = new Set(
+      (existing.purchasePayments ?? [])
+        .filter((p) => p.id !== paymentId && p.cashbookEntryId)
+        .map((p) => p.cashbookEntryId as string),
+    );
+
+    if (cashbookEntryId) {
+      const stillThere = cashEntries.some((e) => e.id === cashbookEntryId);
+      if (!stillThere) cashbookEntryId = null;
+    }
+
+    if (!cashbookEntryId) {
+      const prevAmt = Number(String(prev.amount).replace(/,/g, "")) || 0;
+      const candidates = cashEntries.filter(
+        (e) =>
+          e.vehicleId === vehicleId &&
+          e.direction === "OUT" &&
+          e.entryType === "VEHICLE_PURCHASE" &&
+          !linkedElsewhere.has(e.id) &&
+          (Math.abs((Number(e.amount) || 0) - prevAmt) < 0.02 ||
+            Math.abs((Number(e.amount) || 0) - amount) < 0.02),
+      );
+      const byDate =
+        candidates.find((e) => e.entryDate === prev.date) ||
+        candidates.find((e) => e.entryDate === date);
+      cashbookEntryId = (byDate || candidates[0])?.id ?? null;
+    }
+
+    if (cashbookEntryId) {
+      const cash = await updateCashbookEntryClient(cashbookEntryId, {
+        entryDate: date,
+        amount,
+        channel,
+        bankAccountId,
+        description,
+      });
+      if (!cash.ok) return cash;
+    } else {
+      const hasVat =
+        existing.purchaseType === "COMPANY_VAT_7";
+      const created = await postCashbookEntryClient({
+        entryDate: date,
+        direction: "OUT",
+        entryType: "VEHICLE_PURCHASE",
+        amount,
+        description,
+        vehicleId,
+        entityId: existing.sellerEntityId,
+        channel,
+        bankAccountId,
+        vatType: hasVat ? "FULL_VAT" : "NO_VAT",
+        billNo: billNo || receiptNo || null,
+        documentId: prev.paymentVoucherDocumentId ?? null,
+        documentKind: prev.paymentVoucherDocumentId ? "PAYMENT_VOUCHER" : null,
+        documentNumber: prev.paymentVoucherDocumentNumber ?? null,
+        paymentVoucherDocumentId: prev.paymentVoucherDocumentId ?? null,
+        paymentVoucherDocumentNumber: prev.paymentVoucherDocumentNumber ?? null,
+      });
+      if (!created.ok) return created;
+      cashbookEntryId = created.id;
+    }
+
     const next: VehiclePurchasePayment = {
       ...prev,
       date,
@@ -615,26 +689,8 @@ export async function updateVehiclePurchasePaymentClient(
       receiptNo,
       channel,
       bankAccountId,
+      cashbookEntryId,
     };
-
-    if (prev.cashbookEntryId) {
-      const vehicleLabel =
-        `${existing.code || ""} ${existing.brand} ${existing.model} ${existing.licensePlate || ""}`.trim();
-      const docHints = [
-        billNo ? `บิล ${billNo}` : "",
-        receiptNo ? `ใบเสร็จ ${receiptNo}` : "",
-      ]
-        .filter(Boolean)
-        .join(" · ");
-      const cash = await updateCashbookEntryClient(prev.cashbookEntryId, {
-        entryDate: date,
-        amount,
-        channel,
-        bankAccountId,
-        description: `จ่ายค่าซื้อรถ: ${vehicleLabel}${docHints ? ` ${docHints}` : ""}`.trim(),
-      });
-      if (!cash.ok) return cash;
-    }
 
     const purchasePayments = existing.purchasePayments.map((p, i) => (i === idx ? next : p));
     const saved = await updateVehicleFieldsClient(vehicleId, { purchasePayments });

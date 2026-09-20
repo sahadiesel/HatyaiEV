@@ -3,6 +3,7 @@ export type DocumentKind =
   | "TAX_INVOICE"
   | "RECEIPT"
   | "PURCHASE_ORDER"
+  | "QUOTATION"
   | "WITHHOLDING_TAX"
   | "PAYMENT_VOUCHER";
 

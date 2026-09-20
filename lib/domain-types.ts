@@ -195,7 +195,9 @@ export type CashbookEntryType =
   | "MISC"
   | "PURCHASE_DEPOSIT"
   | "SALE_DEPOSIT"
-  | "TRANSFER";
+  | "TRANSFER"
+  /** ยอดยกมาต้นเดือน (ระบบหรือมือ) */
+  | "BALANCE_CARRY";
 
 export type CashbookEntry = {
   id: string;
@@ -205,6 +207,8 @@ export type CashbookEntry = {
   entryType: CashbookEntryType;
   amount: string;
   description: string;
+  /** รายการที่ระบบสร้างอัตโนมัติ (เช่น ยอดยกมาต้นเดือน) */
+  isSystemAuto?: boolean;
   documentId: string | null;
   documentKind: string | null;
   documentNumber: string | null;

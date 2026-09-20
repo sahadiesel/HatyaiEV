@@ -113,6 +113,12 @@ export const DOCUMENT_KIND_ROUTES: Record<
   },
   RECEIPT: { slug: "receipt", titleTh: "ใบเสร็จรับเงิน", titleEn: "RECEIPT", prefixKey: "docPrefixReceipt" },
   PURCHASE_ORDER: { slug: "purchase-order", titleTh: "ใบสั่งจ้าง", titleEn: "PURCHASE ORDER", prefixKey: "docPrefixPo" },
+  QUOTATION: {
+    slug: "quotation",
+    titleTh: "ใบเสนอราคา",
+    titleEn: "QUOTATION",
+    prefixKey: "docPrefixQuotation",
+  },
   WITHHOLDING_TAX: {
     slug: "withholding",
     titleTh: "หนังสือรับรองการหักภาษี ณ ที่จ่าย",

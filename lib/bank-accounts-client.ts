@@ -276,14 +276,23 @@ export async function getBankAccountsUsageMapClient(): Promise<{
 }> {
   const {
     calcBalancesFromEntries,
+    getCashSettingsClient,
     listCashbookEntriesClient,
   } = await import("@/lib/cashbook-client");
   await ensurePrimaryBankAccount();
-  const [banks, entries] = await Promise.all([
+  const [banks, entries, settings] = await Promise.all([
     listBankAccountsClient(),
-    listCashbookEntriesClient(800),
+    listCashbookEntriesClient(0),
+    getCashSettingsClient(),
   ]);
-  const { bankBalances, cashBalance } = calcBalancesFromEntries(entries, banks, 0);
+  const cashOpening = parseAmount(
+    settings.cashOpeningBalance || settings.openingBalance,
+  );
+  const { bankBalances, cashBalance } = calcBalancesFromEntries(
+    entries,
+    banks,
+    cashOpening,
+  );
 
   const entryCountByBank: Record<string, number> = {};
   for (const e of entries) {

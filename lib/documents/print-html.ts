@@ -58,7 +58,7 @@ export const DOCUMENT_PRINT_CSS = `
 @page { size: A4 portrait; margin: 12mm; }
 * { box-sizing: border-box; }
 body { font-family: "Sarabun", "Tahoma", sans-serif; font-size: 11pt; color: #111; margin: 0; }
-.doc { border: 2px solid #111; padding: 10px 12px; min-height: 260mm; display: flex; flex-direction: column; }
+.doc { padding: 10px 12px; min-height: 260mm; display: flex; flex-direction: column; }
 /* หัวเอกสาร: โลโก้ซ้าย · ชื่อ/ที่อยู่บริษัทชิดขวา ไม่ทับกัน */
 .hdr {
   display: grid;
@@ -94,7 +94,7 @@ table.items th { background: #f1f5f9; text-align: center; }
 .doc-footer { margin-top: auto; padding-top: 16px; text-align: right; font-size: 9.5pt; color: #333; }
 .wht-grid { font-size: 10pt; }
 .wht-grid .row { display: grid; grid-template-columns: 140px 1fr; gap: 4px; margin: 3px 0; }
-.wht-section { border: 1px solid #111; padding: 8px; margin: 6px 0; }
+.wht-section { padding: 8px 0; margin: 6px 0; }
 .sign-block { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 28px; font-size: 10pt; text-align: center; }
 .sign-cell { position: relative; min-height: 120px; }
 /* ตรายางกับลายเซ็นแยกกัน — ไม่ซ้อนทับ */
@@ -204,7 +204,9 @@ export function buildCommercialPrintHtml(opts: {
       <div>${esc(m.bankAccountText ?? "")}</div>
       <div>เมื่อชำระเงินแล้ว กรุณาแจ้งเพื่อออกใบเสร็จรับเงิน/ใบกำกับภาษี</div>
     </div>`
-        : `<div>${esc(opts.notes)}</div>`;
+        : opts.kind === "QUOTATION"
+          ? `<div class="pay-chk">เอกสารนี้เป็นใบเสนอราคา ไม่ใช่ใบกำกับภาษีหรือใบเสร็จรับเงิน${opts.notes ? `<div>${esc(opts.notes)}</div>` : ""}</div>`
+          : `<div>${esc(opts.notes)}</div>`;
 
   const branchLine = m.counterpartyBranchHeadOffice
     ? "☑ สำนักงานใหญ่ ☐ สาขา"
@@ -215,7 +217,7 @@ export function buildCommercialPrintHtml(opts: {
       ? `<tr><td class="lbl">รวม Total</td><td class="val">${fmt(opts.totalAmount)}</td></tr>
       <tr><td class="lbl"><strong>เป็นเงินทั้งสิ้น Grand Total</strong></td><td class="val"><strong>${fmt(opts.totalAmount)}</strong></td></tr>`
       : `<tr><td class="lbl">รวม Total</td><td class="val">${fmt(opts.subtotal)}</td></tr>
-      <tr><td class="lbl">ภาษีมูลค่าเพิ่ม ${m.vatRatePercent ?? 7}%</td><td class="val">${fmt(opts.vatAmount)}</td></tr>
+      <tr><td class="lbl">${(m.vatRatePercent ?? 7) > 0 ? `ภาษีมูลค่าเพิ่ม ${m.vatRatePercent ?? 7}%` : "ไม่มีภาษีมูลค่าเพิ่ม"}</td><td class="val">${fmt(opts.vatAmount)}</td></tr>
       <tr><td class="lbl"><strong>เป็นเงินทั้งสิ้น Grand Total</strong></td><td class="val"><strong>${fmt(opts.totalAmount)}</strong></td></tr>`;
 
   return `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"/><title>${esc(opts.number || route.titleTh)}</title>
@@ -495,10 +497,8 @@ body {
   text-align: center;
   font-weight: bold;
   font-size: 11px;
-  border: 1px solid #333;
   padding: 5px 8px;
   margin-bottom: 8px;
-  background: #fafafa;
 }
 .hdr {
   display: grid;
@@ -719,7 +719,6 @@ body {
   position: relative;
   flex: 1 1 0;
   min-height: 0;
-  border: 1.5px solid #111;
   padding: 5px 8px 4px;
   display: flex;
   flex-direction: column;
@@ -728,7 +727,6 @@ body {
   page-break-inside: avoid;
 }
 .pv-copy-badge {
-  border: 1px solid #111;
   padding: 1px 8px;
   font-size: 8pt;
   font-weight: 700;
@@ -784,7 +782,7 @@ body {
 .pv-copy .party label { color: #333; }
 .pv-copy .meta-r { text-align: right; }
 .pv-copy .wht-section {
-  border: 1px solid #111; margin: 2px 0; padding: 4px 6px; font-size: 8pt; line-height: 1.3;
+  margin: 2px 0; padding: 4px 0; font-size: 8pt; line-height: 1.3;
 }
 .pv-copy .wht-section p { margin: 1px 0; }
 .pv-wht { margin-top: 3px; border-top: 1px dashed #333; padding-top: 2px; }

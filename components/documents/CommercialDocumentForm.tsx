@@ -268,16 +268,36 @@ export function CommercialDocumentForm({
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs text-slate-600">VAT (%)</label>
-            <input
-              type="number"
-              className={inp}
-              value={meta.vatRatePercent ?? 7}
-              onChange={(e) =>
-                setMeta((m) => ({ ...m, vatRatePercent: parseFloat(e.target.value) || 7 }))
-              }
-              disabled={pending}
-            />
+            {kind === "QUOTATION" ? (
+              <label className="mt-6 flex items-center gap-2 text-sm text-slate-800">
+                <input
+                  type="checkbox"
+                  checked={(meta.vatRatePercent ?? 0) > 0}
+                  onChange={(e) =>
+                    setMeta((m) => ({
+                      ...m,
+                      vatScheme: "STANDARD",
+                      vatRatePercent: e.target.checked ? 7 : 0,
+                    }))
+                  }
+                  disabled={pending}
+                />
+                มีภาษีมูลค่าเพิ่ม 7%
+              </label>
+            ) : (
+              <>
+                <label className="mb-1 block text-xs text-slate-600">VAT (%)</label>
+                <input
+                  type="number"
+                  className={inp}
+                  value={meta.vatRatePercent ?? 7}
+                  onChange={(e) =>
+                    setMeta((m) => ({ ...m, vatRatePercent: parseFloat(e.target.value) || 7 }))
+                  }
+                  disabled={pending}
+                />
+              </>
+            )}
           </div>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
